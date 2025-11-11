@@ -1,3 +1,12 @@
+/*
+ * dispatcher.c - Signal handling and periodic task dispatch
+ *
+ * Implements the dispatcher thread that runs alongside the main packet
+ * capture loop. Handles signals (SIGUSR1 for verbose toggle, SIGALRM for
+ * periodic timer) and invokes the killer subsystem at regular intervals
+ * to send deauthentication frames.
+ */
+
 #include <assert.h>
 #include <errno.h>
 #include <signal.h>
@@ -9,42 +18,70 @@
 #include "killer.h"
 #include "terminal.h"
 
-#define DISPATCHER_TIMEOUT 1 /* seconds */
+/* Interval between periodic killer invocations (in seconds) */
+#define DISPATCHER_TIMEOUT 1
 
-int zz_killer_run(zz_handler *zz, zz_killer *killer); /* to avoid circular deps */
+/* Forward declaration to avoid circular dependency with killer.h */
+int zz_killer_run(zz_handler *zz, zz_killer *killer);
 
+/* Global pcap handle for signal handler (signal handlers can't take parameters) */
 static pcap_t *pcap = NULL;
 
+/*
+ * Signal handler for graceful termination (SIGINT, SIGTERM).
+ * Breaks the pcap loop, allowing the program to shut down cleanly.
+ *
+ * Parameters:
+ *   signum - Signal number (not used)
+ */
 static void terminate_pcap_loop(int signum) {
     pcap_breakloop(pcap);
 }
 
+/*
+ * Dispatcher thread main function.
+ * Runs in a separate thread, waiting for signals and periodically
+ * invoking the killer subsystem. Continues until zz->is_done is set.
+ *
+ * Handles two signals:
+ *   SIGUSR1 - Toggle verbose logging on/off
+ *   SIGALRM - Periodic timer (triggers killer execution)
+ *
+ * Parameters:
+ *   _zz - Opaque pointer to zz_handler
+ *
+ * Returns:
+ *   (void *)1 on success, (void *)0 on error
+ */
 static void *dispatcher(void *_zz) {
     zz_handler *zz = _zz;
     sigset_t set;
     struct itimerval timer;
     int error;
 
-    /* prepare signal mask */
+    /* Prepare signal mask - we'll wait for these signals */
     sigemptyset(&set);
-    sigaddset(&set, SIGUSR1);
-    sigaddset(&set, SIGALRM);
+    sigaddset(&set, SIGUSR1);  /* Verbose toggle signal */
+    sigaddset(&set, SIGALRM);  /* Periodic timer signal */
 
-    /* prepare the repeated alarm */
+    /* Set up periodic alarm that fires every DISPATCHER_TIMEOUT seconds.
+     * This drives the periodic killer invocation. */
     memset(&timer, 0, sizeof(struct itimerval));
-    timer.it_value.tv_sec = DISPATCHER_TIMEOUT;
-    timer.it_interval.tv_sec = DISPATCHER_TIMEOUT;
+    timer.it_value.tv_sec = DISPATCHER_TIMEOUT;    /* Initial delay */
+    timer.it_interval.tv_sec = DISPATCHER_TIMEOUT; /* Repeat interval */
     assert(setitimer(ITIMER_REAL, &timer, NULL) == 0);
 
-    /* dispatcher loop */
+    /* Main dispatcher loop - wait for signals */
     error = 0;
     while (!zz->is_done) {
         int signal;
 
-        /* wait for the next signal or timeout */
+        /* Block until we receive one of the signals in our set */
         assert(sigwait(&set, &signal) == 0);
+
         switch (signal) {
         case SIGUSR1:
+            /* Toggle verbose logging (useful for debugging live captures) */
             if (zz->setup.is_verbose) {
                 zz_log("Verbose logging disabled");
                 zz->setup.is_verbose = 0;
@@ -55,10 +92,11 @@ static void *dispatcher(void *_zz) {
             break;
 
         case SIGALRM:
-            /* this signal is also used in passive mode to wake up the
-             * dispatcher and check for the termination */
+            /* Periodic timer expired.
+             * In passive mode, this just helps check the is_done flag.
+             * In active mode, invoke the killer to send deauth frames. */
             if (!zz->setup.is_passive) {
-                /* wake the killer at regular intervals */
+                /* Run the killer subsystem (sends deauth frames to targets) */
                 if (!zz_killer_run(zz, &zz->killer)) {
                     error = zz->is_done = 1;
                 }
@@ -67,34 +105,56 @@ static void *dispatcher(void *_zz) {
         }
     }
 
-    /* reset the alarm */
+    /* Clean up: disable the periodic alarm */
     if (!zz->setup.is_passive) {
         memset(&timer, 0, sizeof(struct itimerval));
         assert(setitimer(ITIMER_REAL, &timer, NULL) == 0);
     }
 
+    /* Return success/failure status to joining thread */
     return (error ? (void *)0 : (void *)1);
 }
 
+/*
+ * Start the dispatcher thread.
+ * Sets up signal handlers and creates the dispatcher thread that will
+ * handle signals and periodic tasks.
+ *
+ * Signal handling strategy:
+ *   - SIGINT/SIGTERM: Handled in main thread, breaks pcap loop
+ *   - SIGUSR1/SIGALRM: Handled in dispatcher thread
+ *   - All other signals: Masked in both threads
+ *
+ * Parameters:
+ *   zz - Handler with configuration
+ *   thread - Output parameter for created thread handle
+ *
+ * Returns:
+ *   Always returns 1 (failures are asserted)
+ */
 int zz_dispatcher_start(zz_handler *zz, pthread_t *thread) {
     struct sigaction sa = {0};
     sigset_t set;
 
-    /* set up the pcap termination handler */
+    /* Set up global pcap handle for signal handler */
     pcap = zz->pcap;
-    sa.sa_handler = terminate_pcap_loop;
-    assert(sigaction(SIGINT, &sa, NULL) == 0);
-    assert(sigaction(SIGTERM, &sa, NULL) == 0);
 
-    /* mask all signals of the calling thread except for termination-related
-     * ones that must terminate the pcap loop */
+    /* Install signal handler for graceful termination */
+    sa.sa_handler = terminate_pcap_loop;
+    assert(sigaction(SIGINT, &sa, NULL) == 0);  /* Ctrl-C */
+    assert(sigaction(SIGTERM, &sa, NULL) == 0); /* kill command */
+
+    /* Mask all signals in the calling thread (main thread) except
+     * termination signals, which must be able to break the pcap loop.
+     * The dispatcher thread will inherit this mask and modify it. */
     sigfillset(&set);
-    sigdelset(&set, SIGINT);
-    sigdelset(&set, SIGTERM);
+    sigdelset(&set, SIGINT);   /* Allow SIGINT in main thread */
+    sigdelset(&set, SIGTERM);  /* Allow SIGTERM in main thread */
     assert(pthread_sigmask(SIG_SETMASK, &set, NULL) == 0);
 
-    /* start the dispatcher */
+    /* Create the dispatcher thread */
     zz_log("Starting the dispatcher thread");
     assert(pthread_create(thread, NULL, dispatcher, zz) == 0);
+
     return 1;
 }

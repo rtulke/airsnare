@@ -1,3 +1,11 @@
+/*
+ * ieee802.c - IEEE 802.11 protocol utilities
+ *
+ * Implements utility functions for working with MAC addresses and SSIDs,
+ * including conversion between different representations and safe string
+ * formatting for display.
+ */
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,6 +13,11 @@
 
 #include "ieee802.h"
 
+/*
+ * Lookup table for fast byte-to-hex string conversion.
+ * Each entry is a 2-character hex representation of a byte value (0x00-0xFF).
+ * This avoids repeated sprintf() calls for better performance.
+ */
 static const char *hex_table[] = {
     "00", "01", "02", "03", "04", "05", "06", "07",
     "08", "09", "0A", "0B", "0C", "0D", "0E", "0F",
@@ -40,6 +53,16 @@ static const char *hex_table[] = {
     "F8", "F9", "FA", "FB", "FC", "FD", "FE", "FF"
 };
 
+/*
+ * Convert a 6-byte MAC address array to zz_mac_addr (64-bit integer).
+ * The MAC address is stored in network byte order (big-endian).
+ *
+ * Parameters:
+ *   octets - 6-byte array containing the MAC address
+ *
+ * Returns:
+ *   MAC address as 64-bit integer (upper 16 bits are zero)
+ */
 zz_mac_addr zz_mac_addr_from_array(const uint8_t *octets) {
     return ((zz_mac_addr)octets[0] << 40) |
            ((zz_mac_addr)octets[1] << 32) |
@@ -49,6 +72,14 @@ zz_mac_addr zz_mac_addr_from_array(const uint8_t *octets) {
            ((zz_mac_addr)octets[5] <<  0);
 }
 
+/*
+ * Convert a zz_mac_addr (64-bit integer) to a 6-byte array.
+ * Extracts each byte from the 48-bit MAC address.
+ *
+ * Parameters:
+ *   octets - Output buffer (must be at least 6 bytes)
+ *   addr - MAC address as 64-bit integer
+ */
 void zz_mac_addr_to_array(uint8_t *octets, zz_mac_addr addr) {
     octets[0] = (addr >> 40) & 0xff;
     octets[1] = (addr >> 32) & 0xff;
@@ -58,7 +89,16 @@ void zz_mac_addr_to_array(uint8_t *octets, zz_mac_addr addr) {
     octets[5] = (addr >>  0) & 0xff;
 }
 
+/*
+ * Format a MAC address as a string "XX:XX:XX:XX:XX:XX".
+ * Uses the hex_table for fast conversion without sprintf overhead.
+ *
+ * Parameters:
+ *   buffer - Output buffer (must be at least ZZ_MAC_ADDR_STRING_SIZE bytes)
+ *   addr - MAC address to format
+ */
 void zz_mac_addr_sprint(char *buffer, zz_mac_addr addr) {
+    /* Extract each byte and format with colons as separators */
     buffer[ 0] = hex_table[(addr >> 40) & 0xff][0];
     buffer[ 1] = hex_table[(addr >> 40) & 0xff][1];
     buffer[ 2] = ':';
@@ -79,32 +119,47 @@ void zz_mac_addr_sprint(char *buffer, zz_mac_addr addr) {
     buffer[17] = '\0';
 }
 
+/*
+ * Parse a MAC address from a string.
+ * Accepts formats: "XX:XX:XX:XX:XX:XX" or "XX-XX-XX-XX-XX-XX"
+ * Each XX must be a valid 2-digit hexadecimal number.
+ *
+ * Parameters:
+ *   addr - Output MAC address
+ *   buffer - Input string to parse
+ *   terminators - String of characters that mark end of MAC address
+ *
+ * Returns:
+ *   1 on successful parse, 0 on parse error
+ */
 int zz_mac_addr_sscan(zz_mac_addr *addr, const char *buffer, const char *terminators) {
     const char *ptr;
     int i;
     uint8_t octets[6] = {0};
 
+    /* Parse 6 octets (bytes) separated by ':' or '-' */
     i = 0;
     ptr = buffer;
     while (i < 6) {
         char *chk;
 
-        /* trigrams */
+        /* Process groups of 3 characters: "XX:" or "XX-" */
         switch ((ptr - buffer) % 3) {
         case 0:
         case 1:
-            /* the first two are hex digits */
+            /* First two characters must be hex digits */
             if (!isxdigit(*ptr)) {
                 return 0;
             }
             break;
 
         case 2:
-            /* check proper terminator (apart from '\0') */
+            /* Third character is separator or terminator */
             octets[i++] = strtol(ptr - 2, &chk, 16);
+            /* Validate: proper hex conversion, correct separator */
             if (chk != ptr ||
-                (i < 6 && !strchr(":-", *ptr)) ||
-                (i == 6 && !strchr(terminators, *ptr))) {
+                (i < 6 && !strchr(":-", *ptr)) ||         /* Mid-address: need : or - */
+                (i == 6 && !strchr(terminators, *ptr))) { /* End: need terminator */
                 return 0;
             }
             break;
@@ -113,29 +168,41 @@ int zz_mac_addr_sscan(zz_mac_addr *addr, const char *buffer, const char *termina
         ptr++;
     }
 
+    /* Convert parsed octets to internal format */
     *addr = zz_mac_addr_from_array(octets);
     return 1;
 }
 
+/*
+ * Escape non-printable characters in SSID for safe display.
+ * SSIDs can contain arbitrary binary data, so non-printable characters
+ * are escaped as "\xHH" hexadecimal sequences. Backslashes and quotes
+ * are also escaped to avoid confusion.
+ *
+ * Parameters:
+ *   buffer - Output buffer (must be at least ZZ_BEACON_MAX_SSID_ESCAPED_LENGTH + 1)
+ *   ssid - Input SSID string (may contain binary data)
+ *   ssid_length - Length of SSID in bytes
+ */
 void zz_ssid_escape_sprint(char *buffer, const char *ssid, int ssid_length) {
     int i;
     char *ptr;
 
-    /* check/escape */
     ptr = buffer;
     for (i = 0; i < ssid_length; i++) {
         char c;
 
-        /* hex-escape non "graph" character including the escape character */
         c = ssid[i];
+        /* Keep printable ASCII characters except backslash and single quote */
         if ((isgraph(c) || c == ' ') && c != '\\' && c != '\'') {
             *ptr++ = c;
         } else {
-            sprintf(ptr, "\\x%02x", c);
+            /* Escape non-printable as \xHH */
+            sprintf(ptr, "\\x%02x", (unsigned char)c);
             ptr += 4;
         }
     }
 
-    /* string terminator */
+    /* Null-terminate the output string */
     *ptr = '\0';
 }

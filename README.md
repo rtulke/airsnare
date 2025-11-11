@@ -69,3 +69,30 @@ ln -s /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Re
 sudo airport --disassociate
 sudo airport --channel=<channel>
 ```
+
+## Code Structure
+
+```
+src/
+|-- zizzania.c              # Main entry point - program orchestration and lifecycle
+|
+|-- handler.c/h             # Handler lifecycle - pcap setup, BPF filtering, packet loop
+|-- dissector.c/h           # Packet dissection - parses 802.11 frames, applies filters
+|-- handshake.c/h           # WPA handshake state machine - tracks 4-way handshake progress
+|-- killer.c/h              # Deauthentication subsystem - manages and injects deauth frames
+|-- dispatcher.c/h          # Signal handling - periodic killer invocation and SIGUSR1/SIGALRM
+|
+|-- clients.c/h             # Client tracking - per-station handshake state and replay counters
+|-- bsss.c/h                # Access point tracking - BSS descriptors with SSID and statistics
+|-- members.c/h             # MAC address sets - whitelist/blacklist with subnet mask support
+|
+|-- ieee802.c/h             # IEEE 802.11 protocol - frame structures, EAPOL, MAC utilities
+|-- options.c/h             # Command-line parsing - argument validation and configuration
+|-- terminal.c/h            # Terminal output - ANSI colors, logging, statistics display
+|-- util.c/h                # Privilege management - setuid/setgid for dropping root
+|-- iface.c/h               # Interface configuration - platform-specific channel setting
+|
+|-- params.h                # Runtime parameters - timeout constants and grace periods
+|-- release.h               # Version metadata - version number and author information
+`-- endian.h                # Endianness macros - byte order conversion for Linux/macOS
+```
