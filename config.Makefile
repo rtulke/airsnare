@@ -1,5 +1,5 @@
 Makefile:
-	wget -q https://raw.githubusercontent.com/cyrus-and/dry-makefile/master/Makefile
+	wget -q https://raw.githubusercontent.com/rtulke/dry-makefile/master/Makefile
 
 SOURCES        := $(wildcard src/*.c) tests/killer_pipe_test.c tests/pool_benchmark.c
 EXECUTABLES    := src/airsnare.c tests/killer_pipe_test.c tests/pool_benchmark.c
