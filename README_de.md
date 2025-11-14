@@ -72,6 +72,14 @@ make install
 make uninstall
 ```
 
+oder für macOS
+
+```
+sudo make install
+sudo make uninstall
+```
+
+
 ## Konfiguration
 
 AirSnare lädt Konfigurationsdateien **vor** den CLI-Argumenten. Jede spätere Quelle überschreibt frühere Werte:
