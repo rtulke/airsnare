@@ -52,8 +52,8 @@ airsnare -r in.pcap -x 00:11:22:33:44:55 -w out.pcap
 The easiest way to install on macOS:
 
 ```
-brew tap rtulke/airsnare https://github.com/rtulke/airsnare
-brew install rtulke/airsnare/airsnare
+brew tap rtulke/airsnare
+brew install airsnare
 ```
 
 To upgrade to a new release:
