@@ -29,6 +29,11 @@ class Airsnare < Formula
       A minimal config file is installed at:
         #{doc}/airsnare.conf.example
       Copy it to ~/.airsnarerc and adjust as needed.
+
+      To convert captures for hashcat cracking:
+        brew install hcxtools
+        hcxpcapngtool -o hashes.hc22000 out.pcap
+        hashcat -m 22000 hashes.hc22000 wordlist.txt
     EOS
   end
 
