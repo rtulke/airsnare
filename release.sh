@@ -8,6 +8,7 @@
 #   - All code changes and CHANGES file are committed and on master
 #   - Working tree is clean
 #   - Remote is 'origin'
+#   - Tap repo lives at TAP_DIR (default: sibling directory homebrew-airsnare)
 
 set -euo pipefail
 
@@ -16,6 +17,8 @@ TAG="v${VERSION}"
 YEAR=$(date +%Y)
 REPO_URL="https://github.com/rtulke/airsnare"
 TARBALL_URL="${REPO_URL}/archive/refs/tags/${TAG}.tar.gz"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TAP_DIR="${TAP_DIR:-${SCRIPT_DIR}/../homebrew-airsnare}"
 
 # -----------------------------------------------------------------------
 # Preflight checks
@@ -34,6 +37,17 @@ fi
 
 if git rev-parse "${TAG}" >/dev/null 2>&1; then
     echo "Error: tag ${TAG} already exists." >&2
+    exit 1
+fi
+
+if [[ ! -d "${TAP_DIR}/.git" ]]; then
+    echo "Error: tap repo not found at '${TAP_DIR}'." >&2
+    echo "  Clone or create it first, or set TAP_DIR=/path/to/homebrew-airsnare" >&2
+    exit 1
+fi
+
+if [[ -n "$(git -C "${TAP_DIR}" status --porcelain)" ]]; then
+    echo "Error: tap repo at '${TAP_DIR}' has uncommitted changes." >&2
     exit 1
 fi
 
@@ -106,12 +120,27 @@ git commit -m "Formula: update to ${TAG}"
 git push origin master
 
 # -----------------------------------------------------------------------
+# 7. Update homebrew-airsnare tap repo
+# -----------------------------------------------------------------------
+
+echo "→ Updating tap repo at ${TAP_DIR}"
+sed -i '' "s|url \"[^\"]*\"|url \"${TARBALL_URL}\"|"   "${TAP_DIR}/Formula/airsnare.rb"
+sed -i '' "s|sha256 \"[^\"]*\"|sha256 \"${SHA256}\"|"  "${TAP_DIR}/Formula/airsnare.rb"
+
+git -C "${TAP_DIR}" add Formula/airsnare.rb
+git -C "${TAP_DIR}" commit -m "Update to ${TAG}"
+git -C "${TAP_DIR}" push origin master
+
+# -----------------------------------------------------------------------
 
 echo ""
 echo "✓ Release ${TAG} complete."
 echo ""
+echo "  Main repo  : ${REPO_URL}"
+echo "  Tap repo   : $(git -C "${TAP_DIR}" remote get-url origin 2>/dev/null || echo "${TAP_DIR}")"
+echo ""
 echo "Install / upgrade with:"
-echo "  brew tap rtulke/airsnare ${REPO_URL}"
+echo "  brew tap rtulke/airsnare"
 echo "  brew install rtulke/airsnare/airsnare"
 echo ""
 echo "Or to upgrade an existing install:"
