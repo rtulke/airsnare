@@ -31,10 +31,13 @@
 /* BPF filter to capture only relevant frames:
  * - Data frames (for client activity tracking)
  * - QoS data frames (newer standard)
- * - Beacon frames (for SSID extraction) */
+ * - Beacon frames (for SSID extraction)
+ * - Reassociation Request/Response (detect re-auth to reset handshake state) */
 #define BPF "wlan[0] == " ZZ_STRING(ZZ_FCF_DATA) \
         " || wlan[0] == " ZZ_STRING(ZZ_FCF_QOS_DATA) \
-        " || wlan[0] == " ZZ_STRING(ZZ_FCF_BEACON)
+        " || wlan[0] == " ZZ_STRING(ZZ_FCF_BEACON) \
+        " || wlan[0] == " ZZ_STRING(ZZ_FCF_REASSOC_REQ) \
+        " || wlan[0] == " ZZ_STRING(ZZ_FCF_REASSOC_RESP)
 
 /*
  * Create and configure the pcap handle for packet capture.
@@ -58,7 +61,7 @@ static int create_pcap(zz_handler *zz) {
 
         /* Log any warnings (pcap_create can succeed with warnings) */
         if (zz->pcap && *pcap_error_buffer) {
-            zz_log("WARNING: %s", pcap_error_buffer);
+            zz_debug("WARNING: %s", pcap_error_buffer);
         }
 
         /* Configure capture parameters before activation */
@@ -68,26 +71,49 @@ static int create_pcap(zz_handler *zz) {
             /* Set snapshot length based on whether we're saving output */
             snaplen = zz->setup.output ? MAX_SNAPLEN : MIN_SNAPLEN;
 
-            /* Configure pcap options and activate:
-             * - snaplen: maximum bytes to capture per packet
-             * - promisc: promiscuous mode (capture all traffic)
-             * - rfmon: monitor mode (unless disabled with -M) */
+            /* Set wireless channel before RFMON activation if specified.
+             * On macOS this is the only effective call (networksetup must run
+             * while the interface is still in managed mode). On Linux it is a
+             * no-op; the ioctl is performed after pcap_activate() below. */
+            if (zz->setup.channel > 0 && !zz_set_channel_pre_rfmon(zz)) {
+                return 0;
+            }
+
+            /* Configure capture options (snaplen, promisc) before activation */
             if (pcap_set_snaplen(zz->pcap, snaplen) != 0 ||
-                pcap_set_promisc(zz->pcap, 1) != 0 ||
-                (!zz->setup.no_rfmon && pcap_set_rfmon(zz->pcap, 1)) ||
-                pcap_activate(zz->pcap)) {
+                pcap_set_promisc(zz->pcap, 1) != 0) {
                 zz_error(zz, "libpcap: %s", pcap_geterr(zz->pcap));
                 return 0;
             }
 
-            /* Set wireless channel if specified */
-            if (zz->setup.is_live && zz->setup.channel > 0) {
-                zz_log("Setting '%s' to channel %d", zz->setup.input, zz->setup.channel);
-                if (!zz_set_channel(zz)) {
-                    zz_error(zz, "Cannot set '%s' to channel %d: %s",
-                             zz->setup.input, zz->setup.channel, strerror(errno));
-                    return 0;
-                }
+            /* Enable monitor mode (RFMON) unless -M was given.
+             * On macOS this may fail if the adapter does not support RFMON,
+             * SIP blocks raw 802.11 access, or the interface is already in
+             * monitor mode (use -M in that case). */
+            if (!zz->setup.no_rfmon && pcap_set_rfmon(zz->pcap, 1) != 0) {
+#ifdef __APPLE__
+                zz_error(zz, "Cannot enable monitor mode on '%s' (%s) — "
+                             "ensure the adapter supports RFMON and that SIP "
+                             "does not block raw 802.11 access; if the "
+                             "interface is already in monitor mode pass -M",
+                         zz->setup.input, pcap_geterr(zz->pcap));
+#else
+                zz_error(zz, "Cannot enable monitor mode on '%s': %s",
+                         zz->setup.input, pcap_geterr(zz->pcap));
+#endif
+                return 0;
+            }
+
+            /* Activate the pcap handle */
+            if (pcap_activate(zz->pcap) != 0) {
+                zz_error(zz, "libpcap: %s", pcap_geterr(zz->pcap));
+                return 0;
+            }
+
+            /* Set wireless channel after RFMON activation if specified.
+             * On Linux this performs the ioctl; on macOS it is a no-op. */
+            if (zz->setup.channel > 0 && !zz_set_channel(zz)) {
+                return 0;
             }
         }
     }
@@ -127,7 +153,7 @@ static int check_monitor(zz_handler *zz) {
 
     /* Get and log the data link type */
     dlt = pcap_datalink(zz->pcap);
-    zz_log("Datalink type '%s'", pcap_datalink_val_to_name(dlt));
+    zz_debug("Datalink type '%s'", pcap_datalink_val_to_name(dlt));
 
     /* Verify it's the expected type (802.11 with radiotap headers) */
     if (dlt != DLT_IEEE802_11_RADIO) {
@@ -185,7 +211,7 @@ static int set_bpf(zz_handler *zz) {
  */
 static int open_dumper(zz_handler *zz) {
     if (zz->setup.output) {
-        zz_log("Dumping packets to '%s'", zz->setup.output);
+        zz_debug("Dumping packets to '%s'", zz->setup.output);
 
         /* Open the output pcap file */
         zz->dumper = pcap_dump_open(zz->pcap, zz->setup.output);
@@ -221,9 +247,9 @@ static int packet_loop(zz_handler *zz) {
 
     /* Print status message */
     if (zz->setup.is_live) {
-        zz_out("Waiting for traffic, press Ctrl-C to exit...");
+        zz_info("Waiting for traffic, press Ctrl-C to exit...");
     } else {
-        zz_out("Parsing '%s'", zz->setup.input);
+        zz_info("Parsing '%s'", zz->setup.input);
     }
 
     /* Run the main packet capture loop.
@@ -235,7 +261,7 @@ static int packet_loop(zz_handler *zz) {
     error = 0;
     switch (pcap_loop(zz->pcap, -1, zz_dissect_packet, (u_char *)zz)) {
     case 0: /* End of file */
-        zz_log("EOF for '%s'", zz->setup.input);
+        zz_debug("EOF for '%s'", zz->setup.input);
         break;
 
     case -1: /* Error */
@@ -248,7 +274,7 @@ static int packet_loop(zz_handler *zz) {
     }
 
     /* Signal shutdown to dispatcher */
-    zz_out("Terminating...");
+    zz_info("Terminating...");
     zz->is_done = 1;
 
     /* Wait for dispatcher thread to complete */
@@ -292,6 +318,9 @@ int zz_initialize(zz_handler *zz) {
 
     /* Require full 4-way handshake by default */
     zz->setup.max_handshake = ZZ_DEFAULT_MAX_HANDSHAKE;
+
+    /* 500 ms window; messages farther apart restart handshake tracking */
+    zz->setup.handshake_timeout = ZZ_DEFAULT_HANDSHAKE_TIMEOUT;
 
     /* Send one deauth frame at a time by default */
     zz->setup.n_deauths = ZZ_DEFAULT_N_DEAUTHS;
@@ -410,7 +439,7 @@ fail:
 int zz_finalize(zz_handler *zz) {
     /* Close output pcap file if open */
     if (zz->dumper) {
-        zz_log("Closing packet dump '%s'", zz->setup.output);
+        zz_debug("Closing packet dump '%s'", zz->setup.output);
         pcap_dump_close(zz->dumper);
         zz->dumper = NULL;
     }
@@ -480,6 +509,7 @@ int zz_error(zz_handler *zz, const char *format, ...) {
     chk = vsnprintf(zz->error_buffer, ZZ_ERROR_BUFFER_SIZE, format, ap);
     va_end(ap);
 
-    /* Return 0 for convenient error handling */
-    return chk > 0 && chk < ZZ_ERROR_BUFFER_SIZE;
+    /* Always return 0 so callers can write: return zz_error(zz, "..."); */
+    (void)chk;
+    return 0;
 }

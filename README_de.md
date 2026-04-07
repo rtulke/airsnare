@@ -13,6 +13,7 @@ Das ursprüngliche [zizzania](https://github.com/cyrus-and/zizzania)-Projekt wir
 - Stabilerer Betrieb: assert()-Aufräumarbeiten, Fehlerbehandlung für Killer-Pipe, Memory-Pools für Clients/BSS/Targets.
 - Bessere Bedienbarkeit: gestapelte Konfigurationsdateien, aufgeräumtes Option-Parsing, klareres Terminal-UI, Log-Level-System, aktualisierte Plattform-Hinweise.
 - Performance & UX: entschlackte Dissector-/Handshake-Pfade, Bloom-Filter in den Hash-Tabellen, Schutzgeländer für passive/live Modi.
+- PMKID-Extraktion: PMKID aus EAPOL-Message-1 wird automatisch extrahiert und im hashcat-22000-Format ausgegeben – Offline-Cracking ohne vollständigen 4-Wege-Handshake.
 
 AirSnare harmoniert zudem perfekt mit [AirJack](https://github.com/rtulke/AirJack): AirJack übernimmt Scan, Kanalwahl, RFMON-Toggle, Capture-Orchestrierung und optional das Cracking, während AirSnare als schlanker libpcap-Backenddienst agiert. Ergebnis: Ein einziger Workflow (`./airjack`), der Netzwerke findet, das Interface korrekt setzt, AirSnare mit passenden Filtern startet und den Capture direkt an hcxpcapngtool bzw. hashcat weiterreicht.
 
@@ -122,12 +123,27 @@ So lassen sich vorkonfigurierte Profile pflegen, während einzelne Flags (z.B. `
 
 ## macOS-Hinweise
 
-Kanalwechsel muss manuell erfolgen:
+### Kanalwechsel
+
+`-c <kanal>` setzt den Kanal **vor** der RFMON-Aktivierung (zwingend, da `pcap_activate` das
+Interface übernimmt). AirSnare versucht dabei automatisch zwei Methoden der Reihe nach:
+
+1. `/usr/sbin/networksetup -setairportchannel` — funktioniert bis macOS Monterey
+2. Das `airport`-Tool — automatischer Fallback für macOS Ventura+ (dort wurde der
+   `-setairportchannel`-Unterbefehl aus `networksetup` entfernt)
+
+Läuft AirSnare als root, wird der Kanal automatisch gesetzt:
 
 ```
-ln -s /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport /usr/local/bin/airport
-sudo airport --disassociate
-sudo airport --channel=<kanal>
+sudo airsnare -i en0 -c 6 -n
+```
+
+Für manuellen Kanalwechsel `-M` übergeben (AirSnare konfiguriert das Interface dann nicht selbst):
+
+```
+sudo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport \
+     --channel=<kanal>
+sudo airsnare -i en0 -M -n
 ```
 
 ## Code-Struktur
@@ -140,7 +156,7 @@ src/
 |-- dissector.c/h           # Frame-Parsen & Filter
 |-- handshake.c/h           # WPA-Handshakes verwalten
 |-- killer.c/h              # Deauth-Injektion
-|-- dispatcher.c/h          # Signal-Handling, Killer-Trigger
+|-- dispatcher.c/h          # Signal-Handling (SIGINT/SIGTERM/SIGUSR1), Killer-Trigger
 |
 |-- clients.c/h             # Stations-Tracking
 |-- bsss.c/h                # Access-Point-Tracking

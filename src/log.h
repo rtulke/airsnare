@@ -29,13 +29,7 @@ typedef enum {
  *   -vvvv     → ZZ_LOG_TRACE (4) - errors + info + warnings + debug + trace
  */
 
-/* Human-readable log level names for output */
-static const char *ZZ_LOG_LEVEL_NAMES[] = {
-    "ERROR",
-    "INFO",
-    "WARN",
-    "DEBUG",
-    "TRACE"
-};
+/* Human-readable log level names for output (defined in terminal.c) */
+extern const char *ZZ_LOG_LEVEL_NAMES[];
 
 #endif

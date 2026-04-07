@@ -40,6 +40,7 @@ typedef struct {
     unsigned grace_time:1;       /* Client is in grace period (wait before deauth) */
     unsigned dump_packet:1;      /* Write this packet to output pcap */
     unsigned got_handshake:1;    /* Complete handshake achieved */
+    unsigned got_pmkid:1;        /* PMKID was extracted from EAPOL Message 1 key data */
     unsigned handshake_info:3;   /* Which handshake message (1-4) or bitmask info */
 } zz_packet_outcome;
 
@@ -65,7 +66,8 @@ typedef struct {
 zz_packet_outcome zz_process_packet(zz_handler *zz,
     zz_mac_addr station, zz_mac_addr bssid,
     const struct pcap_pkthdr *packet_header,
-    const struct ieee8021x_authentication_header *auth);
+    const struct ieee8021x_authentication_header *auth,
+    uint16_t key_data_maxlen);
 
 /*
  * Send a message to the killer subsystem to track/untrack a client.

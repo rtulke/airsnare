@@ -38,7 +38,7 @@ int zz_drop_root(zz_handler *zz) {
 
     /* If not running as root, no need to drop privileges */
     if (getuid() != 0) {
-        zz_log("User not root, nothing to do");
+        zz_debug("User not root, nothing to do");
         return 1;
     }
 
@@ -47,7 +47,7 @@ int zz_drop_root(zz_handler *zz) {
     if (sudo_user) {
         const char *id;
 
-        zz_log("Running with sudo, becoming '%s'", sudo_user);
+        zz_debug("Running with sudo, becoming '%s'", sudo_user);
 
         /* Get the original user's UID from environment */
         id = getenv("SUDO_UID");
@@ -61,6 +61,7 @@ int zz_drop_root(zz_handler *zz) {
         id = getenv("SUDO_GID");
         if (!id) {
             zz_error(zz, "SUDO_GID not defined");
+            return 0;
         }
         gid = atoi(id);
     }
@@ -68,8 +69,20 @@ int zz_drop_root(zz_handler *zz) {
     else {
         struct passwd *nobody;
 
-        zz_log("Becoming 'nobody'");
+        zz_debug("Becoming 'nobody'");
+#ifdef __APPLE__
+        /* On macOS the unprivileged system account is named '_nobody' */
+        nobody = getpwnam("_nobody");
+        if (!nobody) {
+            nobody = getpwnam("nobody");
+        }
+#else
         nobody = getpwnam("nobody");
+#endif
+        if (!nobody) {
+            zz_error(zz, "Cannot find unprivileged user to drop privileges");
+            return 0;
+        }
         uid = nobody->pw_uid;
         gid = nobody->pw_gid;
     }

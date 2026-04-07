@@ -9,7 +9,7 @@
 #define ZZ_RELEASE_H
 
 /* Current version number of AirSnare */
-#define ZZ_VERSION "0.3.0"
+#define ZZ_VERSION "0.9.0"
 
 /* Brief description of the tool's primary functionality */
 #define ZZ_DESCRIPTION "Automated DeAuth attack"
@@ -18,6 +18,6 @@
 #define ZZ_AUTHOR "Robert Tulke <rt@debian.sh>"
 
 /* Copyright year */
-#define ZZ_YEAR "2025"
+#define ZZ_YEAR "2026"
 
 #endif

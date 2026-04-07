@@ -13,10 +13,15 @@ The original [zizzania](https://github.com/cyrus-and/zizzania) project has been 
 - Safer runtime: asserts replaced with error handling, killer-pipe race fixes, pooled allocations for clients/BSS/targets.
 - Better ergonomics: layered config files, refactored option parsing, richer terminal output, log levels, macOS-specific notes.
 - Performance/UX improvements: dissect/handshake refactors, Bloom-filtered hash tables, memory pools, passive/live guard rails.
+- PMKID capture: extracts PMKID from EAPOL Message 1 and logs it in hashcat 22000 format — offline cracking without a full handshake.
 
 AirSnare also works hand-in-hand with [AirJack](https://github.com/rtulke/AirJack): AirJack handles CoreWLAN scanning, channel setting, RFMON toggles, capture orchestration, and optional cracking, while AirSnare delivers a lean libpcap backend for fast/accurate handshake capture. Together you get a single workflow (`./airjack`) that discovers networks, sets the correct channel, launches AirSnare with the right filters, and feeds the resulting capture straight into hcxpcapngtool/hashcat.
 
 ## Examples
+
+> **macOS:** replace `wlan0` with `en0` in all examples. The `-c <channel>` flag sets the
+> channel via `networksetup` automatically — running as root (`sudo`) is required.
+> See [macOS Support](#macos-support) for details and manual alternatives.
 
 Put the network interface in RFMON mode on channel 6 and save the traffic gathered from the stations associated to a specific access point excluding those whose MAC address starts with `00:11:22`:
 
@@ -119,14 +124,61 @@ $EDITOR ~/.airsnarerc
 
 This keeps reusable profiles while still allowing ad-hoc CLI overrides (e.g., `-n`, `-v`).
 
-## macOS support
+## macOS Support
 
-Channel switching must be performed manually:
+### Interface name
+
+On macOS the Wi-Fi interface is typically `en0`. Verify with:
 
 ```
-ln -s /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport /usr/local/bin/airport
-sudo airport --disassociate
-sudo airport --channel=<channel>
+networksetup -listallhardwareports
+```
+
+All examples that reference `wlan0` should use `en0` on macOS.
+
+### Monitor mode (RFMON)
+
+AirSnare calls `pcap_set_rfmon()` automatically unless `-M` is passed. This requires root and
+may fail depending on the adapter and System Integrity Protection (SIP) configuration. If
+`pcap_activate` returns an error, ensure your adapter supports monitor mode and that SIP is
+not blocking raw 802.11 access.
+
+### Channel switching
+
+On macOS, `-c <channel>` sets the channel **before** monitor mode is activated (required because
+`pcap_activate` takes over the interface once RFMON is enabled). Running as root is required:
+
+```
+sudo airsnare -i en0 -c 6 -n
+```
+
+Two methods are tried in order:
+
+1. `/usr/sbin/networksetup -setairportchannel` — works on macOS Monterey and earlier
+2. The `airport` utility — automatic fallback for macOS Ventura+ (where `networksetup` dropped
+   the `-setairportchannel` subcommand)
+
+If both fail, AirSnare exits with a descriptive error. To set the channel manually and skip
+AirSnare's auto-switching, pass `-M`:
+
+```
+sudo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport \
+     --channel=<channel>
+sudo airsnare -i en0 -M -n
+```
+
+### Packet injection (DeAuth)
+
+Packet injection via `pcap_inject()` is **not supported** on the built-in Wi-Fi adapter of
+Apple Silicon Macs (M1/M2/M3) and most Intel Macs running macOS Monterey or later. AirSnare
+will exit with an error when injection fails.
+
+**Workaround:** use an external USB adapter with a macOS-compatible monitor-mode driver
+(e.g. Alfa AWUS036ACH, AWUS036ACS). For capture-only workflows use passive mode (`-n`),
+which never injects frames:
+
+```
+sudo airsnare -i en0 -n -w out.pcap
 ```
 
 ## Code Structure
@@ -139,7 +191,7 @@ src/
 |-- dissector.c/h           # Packet dissection - parses 802.11 frames, applies filters
 |-- handshake.c/h           # WPA handshake state machine - tracks 4-way handshake progress
 |-- killer.c/h              # Deauthentication subsystem - manages and injects deauth frames
-|-- dispatcher.c/h          # Signal handling - periodic killer invocation and SIGUSR1/SIGALRM
+|-- dispatcher.c/h          # Signal handling - SIGINT/SIGTERM/SIGUSR1 via kqueue (macOS) or sigwait (Linux); periodic killer invocation
 |
 |-- clients.c/h             # Client tracking - per-station handshake state and replay counters
 |-- bsss.c/h                # Access point tracking - BSS descriptors with SSID and statistics

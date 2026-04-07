@@ -1,9 +1,15 @@
 /*
  * iface.h - Network interface configuration
  *
- * Handles network interface operations including setting the wireless
- * channel and enabling monitor (RFMON) mode. Platform-specific
- * implementations handle differences between Linux and macOS.
+ * Channel setting is split into two phases to accommodate platform differences:
+ *
+ *   zz_set_channel_pre_rfmon()  — called BEFORE pcap_activate()
+ *       macOS: sets channel via networksetup(8) while still in managed mode
+ *       Linux: no-op (ioctl works post-RFMON)
+ *
+ *   zz_set_channel()            — called AFTER pcap_activate()
+ *       macOS: no-op (already done)
+ *       Linux: sets channel via ioctl(SIOCSIWFREQ)
  */
 
 #ifndef ZZ_IFACE_H
@@ -12,16 +18,18 @@
 #include "handler.h"
 
 /*
- * Set the wireless channel for the capture interface.
- * This function is platform-specific:
- *   - On Linux: Uses iwconfig or similar tools
- *   - On macOS: May require manual channel setting via airport utility
+ * Set the wireless channel before RFMON activation.
+ * On macOS this is the only effective call; on Linux it is a no-op.
  *
- * Parameters:
- *   zz - Handler containing interface name and target channel
+ * Returns: 1 on success, 0 on failure (error in zz->error_buffer)
+ */
+int zz_set_channel_pre_rfmon(zz_handler *zz);
+
+/*
+ * Set the wireless channel after RFMON activation.
+ * On Linux this performs the ioctl; on macOS it is a no-op.
  *
- * Returns:
- *   1 on success, 0 on failure (with error message set in zz->error_buffer)
+ * Returns: 1 on success, 0 on failure (error in zz->error_buffer)
  */
 int zz_set_channel(zz_handler *zz);
 

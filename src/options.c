@@ -19,7 +19,8 @@
 #include "log.h"
 
 enum {
-    OPT_CONFIG = 1000
+    OPT_CONFIG = 1000,
+    OPT_HANDSHAKE_TIMEOUT
 };
 
 /*
@@ -119,7 +120,8 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
     int max_handshake_2 = 0;   /* Flag for -2 option */
     int max_handshake_3 = 0;   /* Flag for -3 option */
     static const struct option long_options[] = {
-        { "config", required_argument, NULL, OPT_CONFIG },
+        { "config",            required_argument, NULL, OPT_CONFIG },
+        { "handshake-timeout", required_argument, NULL, OPT_HANDSHAKE_TIMEOUT },
         { 0, 0, 0, 0 }
     };
 
@@ -186,6 +188,14 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
         case 't':  /* Time between deauth attempts (seconds) */
             if (!parse_natural(optarg, &zz->setup.killer_interval)) {
                 zz_error(zz, "Invalid deauthentication interval '%s'", optarg);
+                return 0;
+            }
+            break;
+
+        case OPT_HANDSHAKE_TIMEOUT:  /* Max ms between messages of the same handshake */
+            if (!parse_natural(optarg, &zz->setup.handshake_timeout)) {
+                zz_error(zz, "Invalid handshake timeout '%s' (must be a positive integer in ms)",
+                         optarg);
                 return 0;
             }
             break;

@@ -30,7 +30,9 @@ typedef struct zz_client {
     uint64_t last_handshake_ts; /* Timestamp of first handshake message (reference point) */
     uint64_t replay_counter;    /* Last seen replay counter (for detecting retransmissions) */
     unsigned handshake;         /* Handshake progress bitmask: bit 0-3 for messages 1-4 */
+    unsigned has_pmkid:1;       /* PMKID was extracted from EAPOL Message 1 key data */
     struct ieee8021x_authentication_header headers[4];  /* Saved EAPOL headers for all 4 messages */
+    uint8_t pmkid[ZZ_EAPOL_PMKID_LENGTH]; /* PMKID from EAPOL-M1 (valid when has_pmkid) */
     UT_hash_handle hh;          /* uthash handle for hash table management */
     struct zz_client *next_free; /* Memory pool linkage */
 } zz_client;

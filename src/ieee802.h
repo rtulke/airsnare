@@ -32,6 +32,8 @@
 #define ZZ_FCF_DATA             0x08  /* Data: Standard data frame */
 #define ZZ_FCF_QOS_DATA         0x88  /* Data: QoS data frame */
 #define ZZ_FCF_DEAUTHENTICATION 0xc0  /* Management: Deauthentication frame */
+#define ZZ_FCF_REASSOC_REQ      0x20  /* Management: Reassociation Request frame */
+#define ZZ_FCF_REASSOC_RESP     0x30  /* Management: Reassociation Response frame */
 
 /* LLC/SNAP header constants for identifying SNAP encapsulation
  * SNAP is used to carry protocols like EAPOL over 802.11 */
@@ -45,6 +47,11 @@
 #define ZZ_BEACON_MAX_SSID_LENGTH    0xff  /* Max SSID length (spec says 32, but we handle up to 255) */
 /* SSID characters may need escaping (\xHH format), so max escaped length is 4x */
 #define ZZ_BEACON_MAX_SSID_ESCAPED_LENGTH  ZZ_BEACON_MAX_SSID_LENGTH * 4
+
+/* RSN (Robust Security Network) Information Element constants */
+#define ZZ_BEACON_RSN_IE_TYPE  0x30    /* Tag number for RSN IE in tagged parameters */
+#define ZZ_RSN_CAP_MFPR        (1 << 6) /* RSN Capabilities: Management Frame Protection Required */
+#define ZZ_RSN_CAP_MFPC        (1 << 7) /* RSN Capabilities: Management Frame Protection Capable */
 
 /* EAPOL (Extensible Authentication Protocol over LAN) constants
  * Used for WPA/WPA2 4-way handshake detection */
@@ -62,6 +69,16 @@
 #define ZZ_EAPOL_FLAGS_2 0x0108 /* 0b0000000100001000 - Expected flags for message 2 (from STA) */
 #define ZZ_EAPOL_FLAGS_3 0x1388 /* 0b0001001110001000 - Expected flags for message 3 (from AP) */
 #define ZZ_EAPOL_FLAGS_4 0x0308 /* 0b0000001100001000 - Expected flags for message 4 (from STA) */
+
+/* PMKID Key Data Encapsulation (KDE) constants — IEEE 802.11 Table 12-7
+ * The PMKID KDE in EAPOL Message 1 enables cracking without a full handshake.
+ * Wire format: DD 14 00:0F:AC 04 <16 bytes PMKID> */
+#define ZZ_EAPOL_KDE_TYPE      0xdd  /* KDE type byte */
+#define ZZ_EAPOL_KDE_OUI_0     0x00  /* RSN OUI byte 0 */
+#define ZZ_EAPOL_KDE_OUI_1     0x0f  /* RSN OUI byte 1 */
+#define ZZ_EAPOL_KDE_OUI_2     0xac  /* RSN OUI byte 2 */
+#define ZZ_EAPOL_KDE_PMKID     0x04  /* PMKID KDE data type */
+#define ZZ_EAPOL_PMKID_LENGTH  16    /* PMKID is always 16 bytes */
 
 /* Deauthentication frame construction helpers */
 #define ZZ_DEAUTHENTICATION_SEQUENCE(x) (((x) & ((1 << 12) - 1)) << 4)  /* Encode sequence number */

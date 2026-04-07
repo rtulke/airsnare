@@ -7,11 +7,18 @@
  */
 
 #include <errno.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "handler.h"
 #include "clients.h"
+
+/* Verify that bssid immediately follows station in memory — required for the
+ * 16-byte composite hash key (station, bssid) used by HASH_ADD/HASH_FIND. */
+_Static_assert(
+    offsetof(zz_client, bssid) == offsetof(zz_client, station) + sizeof(zz_mac_addr),
+    "zz_client: bssid must immediately follow station for composite hash key");
 
 #define ZZ_CLIENT_POOL_CHUNK 64
 

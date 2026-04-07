@@ -18,10 +18,11 @@
 #include "bsss.h"
 
 /* Default configuration values */
-#define ZZ_DEFAULT_MAX_HANDSHAKE    4
-#define ZZ_DEFAULT_N_DEAUTHS        1
-#define ZZ_DEFAULT_KILLER_ATTEMPTS 10
-#define ZZ_DEFAULT_KILLER_INTERVAL  5
+#define ZZ_DEFAULT_MAX_HANDSHAKE       4
+#define ZZ_DEFAULT_N_DEAUTHS           1
+#define ZZ_DEFAULT_KILLER_ATTEMPTS    10
+#define ZZ_DEFAULT_KILLER_INTERVAL     5
+#define ZZ_DEFAULT_HANDSHAKE_TIMEOUT 500 /* milliseconds */
 
 /* Size of error message buffer (includes space for pcap errors) */
 #define ZZ_ERROR_BUFFER_SIZE (1024 + PCAP_ERRBUF_SIZE)
@@ -54,6 +55,7 @@ typedef struct zz_handler {
         int killer_max_attempts;          /* Max deauth attempts before giving up */
         int killer_interval;              /* Interval between deauth bursts (seconds) */
         int max_handshake;                /* Max handshake message number to capture (1-4) */
+        int handshake_timeout;            /* Max ms between messages of the same handshake (default 500) */
         zz_members included_bssids;       /* BSSIDs to include (whitelist) */
         zz_members excluded_bssids;       /* BSSIDs to exclude (blacklist) */
         zz_members included_stations;     /* Stations to include (whitelist) */

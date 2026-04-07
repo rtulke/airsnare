@@ -13,8 +13,8 @@
 #include "params.h"
 #include "terminal.h"
 
-/* Compute absolute difference between two values */
-#define abs(x, y) ((x) > (y) ? (x) - (y) : (y) - (x))
+/* Compute absolute difference between two uint64_t values */
+#define ZZ_ABS(x, y) ((x) > (y) ? (x) - (y) : (y) - (x))
 
 /* Check if first 'max' bits of handshake bitmask are all set.
  * For example, if max=4, checks if bits 0-3 are all 1 (full 4-way handshake).
@@ -67,6 +67,43 @@ static int validate_replay_counter(const zz_client *client, unsigned handshake_i
 }
 
 /*
+ * Scan EAPOL Message 1 key data for a PMKID KDE.
+ * Wire format: DD 14 00:0F:AC 04 <16-byte PMKID>
+ *
+ * Parameters:
+ *   auth            - EAPOL authentication header; key data follows immediately
+ *   key_data_maxlen - Captured key data bytes available (may be less than declared)
+ *   pmkid_out       - Output buffer (must be ZZ_EAPOL_PMKID_LENGTH bytes)
+ *
+ * Returns: 1 if PMKID found and extracted, 0 otherwise
+ */
+static int extract_pmkid(const struct ieee8021x_authentication_header *auth,
+                          uint16_t key_data_maxlen, uint8_t *pmkid_out) {
+    const uint8_t *p   = (const uint8_t *)(auth + 1);
+    const uint8_t *end = p + key_data_maxlen;
+
+    while (p + 2 <= end) {
+        uint8_t type       = *p++;
+        uint8_t len        = *p++;
+        const uint8_t *kde_end = p + len;
+
+        if (kde_end > end) break;
+
+        if (type == ZZ_EAPOL_KDE_TYPE && len >= 4 + ZZ_EAPOL_PMKID_LENGTH &&
+            p[0] == ZZ_EAPOL_KDE_OUI_0 &&
+            p[1] == ZZ_EAPOL_KDE_OUI_1 &&
+            p[2] == ZZ_EAPOL_KDE_OUI_2 &&
+            p[3] == ZZ_EAPOL_KDE_PMKID) {
+            memcpy(pmkid_out, p + 4, ZZ_EAPOL_PMKID_LENGTH);
+            return 1;
+        }
+
+        p = kde_end;
+    }
+    return 0;
+}
+
+/*
  * Process a packet through the WPA handshake state machine.
  * This is the heart of AirSnare's handshake tracking logic. It maintains
  * per-client state and determines what actions should be taken based on
@@ -97,6 +134,7 @@ static int validate_replay_counter(const zz_client *client, unsigned handshake_i
  *   bssid - Access point BSSID
  *   packet_header - Packet metadata (timestamp, etc.)
  *   auth - EAPOL authentication header (NULL for data frames)
+ *   key_data_maxlen - Captured key data bytes available after auth header
  *
  * Returns:
  *   Outcome structure indicating what actions to take
@@ -104,7 +142,8 @@ static int validate_replay_counter(const zz_client *client, unsigned handshake_i
 zz_packet_outcome zz_process_packet(zz_handler *zz,
     zz_mac_addr station, zz_mac_addr bssid,
     const struct pcap_pkthdr *packet_header,
-    const struct ieee8021x_authentication_header *auth) {
+    const struct ieee8021x_authentication_header *auth,
+    uint16_t key_data_maxlen) {
     zz_client *client;
     time_t last_data_ts;
     zz_packet_outcome outcome = {0};
@@ -163,7 +202,8 @@ zz_packet_outcome zz_process_packet(zz_handler *zz,
         /* Scenario 2: Handshake timeout - too much time passed.
          * Even if this is a retransmission, we restart the tracking because
          * the previous attempt is considered stale. */
-        else if (abs(client->last_handshake_ts, ts) > ZZ_MAX_HANDSHAKE_TIME) {
+        else if (ZZ_ABS(client->last_handshake_ts, ts) >
+                     (uint64_t)zz->setup.handshake_timeout * 1000ULL) {
             initialize = 1;
             outcome.track_reason = ZZ_TRACK_REASON_EXPIRATION;
         }
@@ -217,6 +257,18 @@ zz_packet_outcome zz_process_packet(zz_handler *zz,
             client->handshake = 1 << handshake_id;  /* Set only this message bit */
             memcpy(&client->headers[handshake_id], auth,
                    sizeof(struct ieee8021x_authentication_header));
+        }
+
+        /* Extract PMKID from EAPOL Message 1 key data (first time only).
+         * A PMKID alone is sufficient for offline cracking (hashcat 22000 mode)
+         * and avoids the need to capture the full 4-way handshake. */
+        if (handshake_id == 0 && !client->has_pmkid && key_data_maxlen > 0) {
+            uint8_t tmp_pmkid[ZZ_EAPOL_PMKID_LENGTH];
+            if (extract_pmkid(auth, key_data_maxlen, tmp_pmkid)) {
+                memcpy(client->pmkid, tmp_pmkid, ZZ_EAPOL_PMKID_LENGTH);
+                client->has_pmkid = 1;
+                outcome.got_pmkid = 1;
+            }
         }
     }
     /* Branch 2: Regular data packet (not EAPOL) */

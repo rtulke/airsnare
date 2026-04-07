@@ -8,9 +8,11 @@ compile_commands.json
 *.o
 *.d
 CLAUDE.md
+TRACKING.md
 TODO.md
 tests
 tests/
 AGENTS.md
+memory/
 .github/
 config.Makefile

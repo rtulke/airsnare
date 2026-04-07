@@ -62,12 +62,6 @@
 #define zz_debug(format, ...) zz_print(DEBUG, (zz->setup.log_level >= ZZ_LOG_DEBUG), format, ##__VA_ARGS__)
 #define zz_trace(format, ...) zz_print(TRACE, (zz->setup.log_level >= ZZ_LOG_TRACE), format, ##__VA_ARGS__)
 
-/* Legacy alias for backward compatibility (zz_out is now zz_info) */
-#define zz_out(format, ...) zz_info(format, ##__VA_ARGS__)
-
-/* Legacy alias for backward compatibility (zz_log is now zz_debug) */
-#define zz_log(format, ...) zz_debug(format, ##__VA_ARGS__)
-
 /* Print command-line usage information */
 void zz_print_usage(void);
 

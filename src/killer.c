@@ -131,8 +131,14 @@ static int set_target(zz_handler *zz, zz_killer *killer,
         *tmp = *target;
         HASH_ADD(hh, killer->targets, station, 2 * sizeof(zz_mac_addr), tmp);
 
-        /* Start with a randomized sequence number to make frames look more natural */
-        tmp->sequence_control = rand();
+        /* Start with a randomized sequence number to make frames look more natural.
+         * On macOS use arc4random_uniform(): thread-safe and cryptographically sound.
+         * On Linux fall back to rand() (not thread-safe but sufficient here). */
+#ifdef __APPLE__
+        tmp->sequence_control = (uint16_t)arc4random_uniform(65536);
+#else
+        tmp->sequence_control = rand() & 0xffff;
+#endif
     }
     /* Existing target - just update the schedule */
     else {
@@ -212,7 +218,16 @@ static int kill_target(zz_handler *zz, struct zz_target *target) {
     for (i = 0; i < zz->setup.n_deauths; i++) {
         /* Inject the packet onto the wireless interface */
         if (pcap_inject(zz->pcap, &packet, sizeof(packet)) == -1) {
-            zz_error(zz, "Cannot inject the deauthentication packet");
+#ifdef __APPLE__
+            zz_error(zz, "Packet injection failed (%s) — "
+                         "built-in Wi-Fi adapters on macOS do not support "
+                         "monitor-mode injection; use passive mode (-n) or "
+                         "an external USB adapter",
+                     pcap_geterr(zz->pcap));
+#else
+            zz_error(zz, "Cannot inject the deauthentication packet: %s",
+                     pcap_geterr(zz->pcap));
+#endif
             return 0;
         }
 
@@ -324,7 +339,7 @@ int zz_killer_post_message(zz_handler *zz, zz_killer *killer,
 
         zz_mac_addr_sprint(station_str, station);
         zz_mac_addr_sprint(bssid_str, bssid);
-        zz_log("Killer pipe is full; dropping message for %s @ %s",
+        zz_debug("Killer pipe is full; dropping message for %s @ %s",
                station_str, bssid_str);
         zz->killer_pipe_drops++;
         goto unlock;
@@ -429,7 +444,7 @@ int zz_killer_run(zz_handler *zz, zz_killer *killer) {
         /* Send deauth frames to this target */
         zz_mac_addr_sprint(station_str, iterator->station);
         zz_mac_addr_sprint(bssid_str, iterator->bssid);
-        zz_log("Deauthenticating %s @ %s", station_str, bssid_str);
+        zz_debug("Deauthenticating %s @ %s", station_str, bssid_str);
 
         if (!kill_target(zz, iterator)) {
             return 0;  /* Injection failed */
@@ -437,7 +452,7 @@ int zz_killer_run(zz_handler *zz, zz_killer *killer) {
 
         /* Decrement attempts counter and check if we should give up */
         if (--iterator->attempts == 0) {
-            zz_log("Giving up with %s @ %s", station_str, bssid_str);
+            zz_debug("Giving up with %s @ %s", station_str, bssid_str);
         }
     }
 
@@ -457,10 +472,10 @@ void zz_killer_free(zz_handler *zz, zz_killer *killer) {
 
     /* Close the pipe */
     if (close(killer->pipe[0]) == -1) {
-        zz_log("Cannot close killer pipe (read end): %s", strerror(errno));
+        zz_debug("Cannot close killer pipe (read end): %s", strerror(errno));
     }
     if (close(killer->pipe[1]) == -1) {
-        zz_log("Cannot close killer pipe (write end): %s", strerror(errno));
+        zz_debug("Cannot close killer pipe (write end): %s", strerror(errno));
     }
 
     /* Free all targets from the hash table */
@@ -471,7 +486,7 @@ void zz_killer_free(zz_handler *zz, zz_killer *killer) {
 
     pthread_error = pthread_mutex_destroy(&killer->pipe_lock);
     if (pthread_error != 0) {
-        zz_log("Cannot destroy killer pipe lock: %s", strerror(pthread_error));
+        zz_debug("Cannot destroy killer pipe lock: %s", strerror(pthread_error));
     }
 
     target_pool_destroy(killer);

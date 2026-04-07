@@ -18,6 +18,7 @@ deauth_interval = 10
 
 # Handshake handling
 max_handshake = 3
+handshake_timeout = 500              # max ms between messages of the same handshake (default: 500)
 bssid_include = AA:BB:CC:DD:EE:FF/ff:ff:ff:00:00:00
 station_exclude = 00:11:22:33:44:55
 station_exclude_first = true

@@ -31,6 +31,7 @@ struct zz_frame_addresses {
     zz_mac_addr source;
     zz_mac_addr destination;
     int is_beacon;
+    int is_reassoc; /* 1 for Reassociation Request or Response */
 };
 
 static int parse_frame_addresses(zz_handler *zz, const struct pcap_pkthdr *packet_header,
@@ -88,22 +89,105 @@ static void get_ssid(const uint8_t *params, uint32_t length,
     }
 }
 
+/*
+ * Extract RSN capabilities from beacon tagged parameters.
+ * Navigates the variable-length RSN IE body to reach the 2-byte
+ * Capabilities field (bits: 6=MFPR, 7=MFPC).
+ *
+ * Parameters:
+ *   params - Start of tagged parameters section
+ *   length - Total length of parameters section
+ *   capabilities - Output: RSN Capabilities value (little-endian)
+ *
+ * Returns:
+ *   1 if RSN IE was found and capabilities extracted, 0 otherwise
+ */
+static int get_rsn_capabilities(const uint8_t *params, uint32_t length,
+                                uint16_t *capabilities) {
+    const uint8_t *ptr = params;
+    const uint8_t *end = params + length;
+
+    while (ptr + 2 <= end) {
+        uint8_t ie_type    = *ptr++;
+        uint8_t ie_length  = *ptr++;
+        const uint8_t *ie_end = ptr + ie_length;
+
+        if (ie_end > end) {
+            break;  /* Malformed IE — stop scanning */
+        }
+
+        if (ie_type == ZZ_BEACON_RSN_IE_TYPE) {
+            const uint8_t *p = ptr;
+            uint16_t pairwise_count, akm_count;
+
+            /* Skip Version (2 bytes) and Group Cipher Suite (4 bytes) */
+            if (p + 8 > ie_end) break;
+            p += 2;  /* version */
+            p += 4;  /* group cipher suite */
+
+            /* Pairwise Cipher Suite Count + Suites */
+            pairwise_count = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+            p += 2;
+            if (p + (uint32_t)pairwise_count * 4 > ie_end) break;
+            p += (uint32_t)pairwise_count * 4;
+
+            /* AKM Suite Count + Suites */
+            if (p + 2 > ie_end) break;
+            akm_count = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+            p += 2;
+            if (p + (uint32_t)akm_count * 4 > ie_end) break;
+            p += (uint32_t)akm_count * 4;
+
+            /* RSN Capabilities (2 bytes, little-endian) */
+            if (p + 2 > ie_end) break;
+            *capabilities = (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+            return 1;
+        }
+
+        ptr = ie_end;
+    }
+
+    return 0;
+}
+
 static int parse_frame_addresses(zz_handler *zz, const struct pcap_pkthdr *packet_header,
                                  const struct ieee80211_mac_header *mac_header,
                                  struct zz_frame_addresses *frame) {
     memset(frame, 0, sizeof(*frame));
 
     if (!mac_header->from_ds && !mac_header->to_ds) {
-        if (((const uint8_t *)mac_header)[0] != ZZ_FCF_BEACON) {
-            return 0;
+        const uint8_t fcf0 = ((const uint8_t *)mac_header)[0];
+
+        if (fcf0 == ZZ_FCF_BEACON) {
+            frame->is_beacon = 1;
+            frame->destination = zz_mac_addr_from_array(mac_header->address_1);
+            frame->source = zz_mac_addr_from_array(mac_header->address_2);
+            frame->bssid = zz_mac_addr_from_array(mac_header->address_3);
+            frame->station = 0;
+            return 1;
         }
 
-        frame->is_beacon = 1;
-        frame->destination = zz_mac_addr_from_array(mac_header->address_1);
-        frame->source = zz_mac_addr_from_array(mac_header->address_2);
-        frame->bssid = zz_mac_addr_from_array(mac_header->address_3);
-        frame->station = 0;
-        return 1;
+        if (fcf0 == ZZ_FCF_REASSOC_REQ) {
+            /* addr1 = new AP (BSSID), addr2 = station (source) */
+            frame->bssid       = zz_mac_addr_from_array(mac_header->address_1);
+            frame->station     = zz_mac_addr_from_array(mac_header->address_2);
+            frame->source      = frame->station;
+            frame->destination = frame->bssid;
+            frame->is_reassoc  = 1;
+            return 1;
+        }
+
+        if (fcf0 == ZZ_FCF_REASSOC_RESP) {
+            /* addr1 = station (destination), addr2 = AP (BSSID) */
+            frame->station     = zz_mac_addr_from_array(mac_header->address_1);
+            frame->bssid       = zz_mac_addr_from_array(mac_header->address_2);
+            frame->source      = frame->bssid;
+            frame->destination = frame->station;
+            frame->is_reassoc  = 1;
+            return 1;
+        }
+
+        return 0;
     }
 
     if (mac_header->from_ds && !mac_header->to_ds) {
@@ -144,13 +228,83 @@ static int handle_beacon_frame(zz_handler *zz, const struct pcap_pkthdr *packet_
         get_ssid(cursor + ZZ_BEACON_SSID_PARAMS_OFFSET,
                  packet_header->caplen - (cursor - packet),
                  &ssid, &ssid_length);
-        memcpy(bss->ssid, ssid, ssid_length);
+        if (ssid_length > 0 && ssid_length <= ZZ_BEACON_MAX_SSID_LENGTH) {
+            memcpy(bss->ssid_raw, ssid, (size_t)ssid_length);
+            bss->ssid_raw_length = ssid_length;
+        }
+
+        /* Parse RSN IE to detect Management Frame Protection capabilities */
+        {
+            const uint8_t *params = cursor + ZZ_BEACON_SSID_PARAMS_OFFSET;
+            uint32_t total  = packet_header->caplen;
+            uint32_t offset = (uint32_t)(params - packet);
+            uint16_t rsn_caps;
+            if (offset < total &&
+                get_rsn_capabilities(params, total - offset, &rsn_caps)) {
+                bss->pmf_capable  = !!(rsn_caps & ZZ_RSN_CAP_MFPC);
+                bss->pmf_required = !!(rsn_caps & ZZ_RSN_CAP_MFPR);
+            }
+        }
+
         bss->has_beacon = 1;
         zz_ssid_escape_sprint(bss->ssid, ssid, ssid_length);
-        zz_out("BSS discovered %s $'%s'", bssid_str, bss->ssid);
+        zz_info("BSS discovered %s $'%s'%s", bssid_str, bss->ssid,
+               bss->pmf_required ? " [PMF-required]" :
+               bss->pmf_capable  ? " [PMF-capable]"  : "");
+
+        if (bss->pmf_required && zz->setup.is_live && !zz->setup.is_passive) {
+            zz_warn("PMF required on %s — DeAuth frames will be rejected; "
+                    "use -n for passive capture",
+                    bssid_str);
+        }
     }
 
     return 1;
+}
+
+/*
+ * Format and log a PMKID in hashcat 22000 format:
+ *   WPA*01*<pmkid_hex>*<bssid_hex>*<station_hex>*<ssid_hex>***
+ * This output can be fed directly to hashcat for offline cracking.
+ */
+static void log_pmkid_hashcat(zz_handler *zz, const zz_client *client, const zz_bss *bss,
+                               zz_mac_addr station, zz_mac_addr bssid,
+                               const char *station_str, const char *bssid_str) {
+    static const char hex[] = "0123456789abcdef";
+    /* 7 + 32 + 1 + 12 + 1 + 12 + 1 + (255*2) + 3 + 1 = 580 */
+    char line[580];
+    uint8_t ap_bytes[6];
+    uint8_t sta_bytes[6];
+    char *p = line;
+    int i;
+
+    zz_mac_addr_to_array(ap_bytes, bssid);
+    zz_mac_addr_to_array(sta_bytes, station);
+
+    memcpy(p, "WPA*01*", 7); p += 7;
+    for (i = 0; i < ZZ_EAPOL_PMKID_LENGTH; i++) {
+        *p++ = hex[(client->pmkid[i] >> 4) & 0xf];
+        *p++ = hex[client->pmkid[i] & 0xf];
+    }
+    *p++ = '*';
+    for (i = 0; i < 6; i++) {
+        *p++ = hex[(ap_bytes[i] >> 4) & 0xf];
+        *p++ = hex[ap_bytes[i] & 0xf];
+    }
+    *p++ = '*';
+    for (i = 0; i < 6; i++) {
+        *p++ = hex[(sta_bytes[i] >> 4) & 0xf];
+        *p++ = hex[sta_bytes[i] & 0xf];
+    }
+    *p++ = '*';
+    for (i = 0; i < bss->ssid_raw_length; i++) {
+        *p++ = hex[((unsigned char)bss->ssid_raw[i] >> 4) & 0xf];
+        *p++ = hex[(unsigned char)bss->ssid_raw[i] & 0xf];
+    }
+    memcpy(p, "***", 4); /* includes NUL */
+
+    zz_info("^_^ PMKID for %s @ %s $'%s': %s",
+           station_str, bssid_str, bss->ssid, line);
 }
 
 static int process_packet_outcome(zz_handler *zz, const struct pcap_pkthdr *packet_header,
@@ -224,11 +378,11 @@ static int process_packet_outcome(zz_handler *zz, const struct pcap_pkthdr *pack
     }
 
     if (outcome.new_client) {
-        zz_out("New client %s @ %s $'%s'", station_str, bssid_str, bss->ssid);
+        zz_info("New client %s @ %s $'%s'", station_str, bssid_str, bss->ssid);
     }
 
     if (outcome.got_handshake) {
-        zz_out("^_^ Full handshake for %s @ %s $'%s'", station_str, bssid_str, bss->ssid);
+        zz_info("^_^ Full handshake for %s @ %s $'%s'", station_str, bssid_str, bss->ssid);
 
         if (zz->setup.is_live && !zz->setup.is_passive) {
             if (!zz_killer_post_message(zz, &zz->killer, station, bssid, outcome)) {
@@ -240,12 +394,20 @@ static int process_packet_outcome(zz_handler *zz, const struct pcap_pkthdr *pack
 
         bss->n_handshakes++;
         if (zz_members_put(&bss->stations, station) == -1) {
-            zz_log("Cannot record station membership for %s: %s",
+            zz_debug("Cannot record station membership for %s: %s",
                    bss->ssid, strerror(errno));
         }
 
         if (zz->setup.is_live && zz->setup.early_quit) {
             pcap_breakloop(zz->pcap);
+        }
+    }
+
+    if (outcome.got_pmkid) {
+        zz_client *pmkid_client;
+        if (zz_clients_lookup(zz, &zz->clients, station, bssid, &pmkid_client) >= 0 &&
+            pmkid_client->has_pmkid) {
+            log_pmkid_hashcat(zz, pmkid_client, bss, station, bssid, station_str, bssid_str);
         }
     }
 
@@ -410,6 +572,29 @@ void zz_dissect_packet(u_char *_zz, const struct pcap_pkthdr *packet_header,
         return;
     }
 
+    /* Phase 7b: Handle reassociation — reset client handshake state.
+     * Reassociation Request/Response indicates the station is re-authenticating.
+     * Invalidate any in-progress handshake so fresh EAPOL messages are not
+     * confused with stale state from the previous association. */
+    if (frame.is_reassoc) {
+        zz_client *client;
+        int lookup_status = zz_clients_lookup(zz, &zz->clients,
+                                              frame.station, frame.bssid, &client);
+        if (lookup_status == -1) {
+            zz->is_done = 1;
+            pcap_breakloop(zz->pcap);
+            return;
+        }
+        if (lookup_status == 0 && client->handshake) {
+            client->handshake = 0;
+            client->last_handshake_ts = 0;
+            client->replay_counter = 0;
+            trace_ts(zz, packet_header, "%s @ %s $'%s' - Reassociation: handshake state reset",
+                     station_str, bssid_str, bss->ssid);
+        }
+        return;
+    }
+
     /* Phase 8: Handle broadcast/multicast traffic */
 
     /* Check if destination is broadcast (FF:FF:FF:FF:FF:FF) or multicast (bit 0 set) */
@@ -459,11 +644,25 @@ void zz_dissect_packet(u_char *_zz, const struct pcap_pkthdr *packet_header,
 
     /* Phase 10: Invoke handshake state machine */
 
-    /* Process this packet through the state machine.
-     * This tracks handshake progress, detects retransmissions, handles timeouts,
-     * and determines what action to take. */
-    outcome = zz_process_packet(zz, frame.station, frame.bssid, packet_header,
-                                authentication_header);
+    /* Compute available key data bytes (min of declared length and what was captured)
+     * to prevent out-of-bounds reads on truncated EAPOL packets. */
+    {
+        uint16_t key_data_maxlen = 0;
+        if (authentication_header) {
+            uint32_t auth_end = (uint32_t)((const uint8_t *)authentication_header
+                                            - packet + sizeof(*authentication_header));
+            uint16_t declared = be16toh(authentication_header->key_data_length);
+            uint32_t captured = packet_header->caplen > auth_end
+                                ? packet_header->caplen - auth_end : 0U;
+            key_data_maxlen = (uint16_t)(declared < captured ? declared : captured);
+        }
+
+        /* Process this packet through the state machine.
+         * This tracks handshake progress, detects retransmissions, handles timeouts,
+         * and determines what action to take. */
+        outcome = zz_process_packet(zz, frame.station, frame.bssid, packet_header,
+                                    authentication_header, key_data_maxlen);
+    }
 
     if (!process_packet_outcome(zz, packet_header, packet, bss, authentication_header,
                                 outcome, frame.station, frame.bssid,

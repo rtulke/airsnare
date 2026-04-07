@@ -14,6 +14,14 @@
 #include "release.h"
 #include "terminal.h"
 
+const char *ZZ_LOG_LEVEL_NAMES[] = {
+    "ERROR",
+    "INFO",
+    "WARN",
+    "DEBUG",
+    "TRACE"
+};
+
 /*
  * Print command-line usage information to stderr.
  * Shows the program version, copyright, all available options with
@@ -91,12 +99,12 @@ void zz_print_stats(zz_handler *zz) {
 
     /* Print libpcap packet statistics if available */
     if (pcap_stats(zz->pcap, &stats) == 0) {
-        zz_out("");
-        zz_out("Packet statistics");
-        zz_out("  - Received ....... %u", stats.ps_recv);
-        zz_out("  - Dropped ........ %u", stats.ps_drop + stats.ps_ifdrop);
+        zz_info("");
+        zz_info("Packet statistics");
+        zz_info("  - Received ....... %u", stats.ps_recv);
+        zz_info("  - Dropped ........ %u", stats.ps_drop + stats.ps_ifdrop);
         if (zz->killer_pipe_drops > 0) {
-            zz_out("  - Killer drops ... %lu", zz->killer_pipe_drops);
+            zz_info("  - Killer drops ... %lu", zz->killer_pipe_drops);
         }
     }
 
@@ -115,11 +123,11 @@ void zz_print_stats(zz_handler *zz) {
         zz_mac_addr_sprint(bssid_str, bss->bssid);
 
         /* Print BSS statistics */
-        zz_out("");
-        zz_out("SSID $'%s' (%-*s)", bss->ssid, ZZ_MAC_COLUMN_WIDTH, bssid_str);
-        zz_out("  - Handshakes ..... %ld", bss->n_handshakes);
-        zz_out("  - Stations ....... %u", zz_members_count(&bss->stations));
-        zz_out("  - Data packets ... %ld", bss->n_data_packets);
+        zz_info("");
+        zz_info("SSID $'%s' (%-*s)", bss->ssid, ZZ_MAC_COLUMN_WIDTH, bssid_str);
+        zz_info("  - Handshakes ..... %ld", bss->n_handshakes);
+        zz_info("  - Stations ....... %u", zz_members_count(&bss->stations));
+        zz_info("  - Data packets ... %ld", bss->n_data_packets);
 
         /* If we captured handshakes and have an output file, show crack/decrypt commands */
         if (bss->n_handshakes > 0 && (!zz->setup.is_live || zz->setup.output)) {
@@ -130,18 +138,18 @@ void zz_print_stats(zz_handler *zz) {
             file = (strcmp(file, "-") == 0 ? "CAPTURE" : file);
 
             /* Print aircrack-ng command for password cracking */
-            zz_out("  - Crack with ..... aircrack-ng -w 'WORDLIST' -b %s '%s'", bssid_str, file);
+            zz_info("  - Crack with ..... aircrack-ng -w 'WORDLIST' -b %s '%s'", bssid_str, file);
 
             /* Print airdecap-ng command for decrypting traffic with known password */
-            zz_out("  - Decrypt with ... airdecap-ng -e $'%s' -b %s -p 'PASSPHRASE' '%s'",
+            zz_info("  - Decrypt with ... airdecap-ng -e $'%s' -b %s -p 'PASSPHRASE' '%s'",
                    bss->ssid, bssid_str, file);
         }
     }
 
     /* If no BSSs were found or allowed, print a message */
     if (n_allowed_ssid == 0) {
-        zz_out("");
-        zz_out("No BSS found");
+        zz_info("");
+        zz_info("No BSS found");
         return;
     }
 }

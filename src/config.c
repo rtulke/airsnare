@@ -9,10 +9,12 @@
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <unistd.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -118,7 +120,17 @@ static int expand_path(zz_handler *zz, const char *value, char *buffer,
     if (value[0] == '~') {
         const char *home = getenv("HOME");
         if (!home) {
-            zz_error(zz, "%s:%u: Cannot expand '~', HOME not set", source, line);
+            /* Fallback: look up home directory via passwd database.
+             * Handles sudo configurations where HOME is unset or points
+             * to root's home rather than the invoking user's home. */
+            struct passwd *pw = getpwuid(getuid());
+            if (pw) {
+                home = pw->pw_dir;
+            }
+        }
+        if (!home) {
+            zz_error(zz, "%s:%u: Cannot expand '~': HOME not set and getpwuid failed",
+                     source, line);
             return 0;
         }
         if (snprintf(buffer, size, "%s%s", home, value + 1) >= (int)size) {
@@ -385,6 +397,11 @@ static int apply_entry(zz_handler *zz, const char *source, unsigned line,
     if (strcmp(key, "max_handshake") == 0) {
         return parse_int_option(zz, source, line, key, value, 2, 4,
                                 &zz->setup.max_handshake);
+    }
+
+    if (strcmp(key, "handshake_timeout") == 0) {
+        return parse_int_option(zz, source, line, key, value, 1, INT_MAX,
+                                &zz->setup.handshake_timeout);
     }
 
     if (strcmp(key, "dump_group_traffic") == 0 ||

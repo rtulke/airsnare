@@ -26,7 +26,11 @@ typedef struct zz_bss {
     zz_mac_addr bssid;          /* AP's MAC address (BSSID) - hash table key */
     unsigned is_allowed:1;      /* AP passed include/exclude filters */
     unsigned has_beacon:1;      /* We've seen a beacon frame (have SSID) */
+    unsigned pmf_capable:1;     /* AP supports Management Frame Protection (MFPC, RSN cap bit 7) */
+    unsigned pmf_required:1;    /* AP requires Management Frame Protection (MFPR, RSN cap bit 6) */
     char ssid[ZZ_BEACON_MAX_SSID_ESCAPED_LENGTH + 1];  /* Network name (escaped for display) */
+    char ssid_raw[ZZ_BEACON_MAX_SSID_LENGTH + 1];      /* Raw SSID bytes for hashcat hex encoding */
+    int  ssid_raw_length;                              /* Length of raw SSID in bytes (0 if unknown) */
     zz_members stations;        /* Set of stations with at least one handshake message */
     long n_handshakes;          /* Count of completed handshakes for this AP */
     long n_data_packets;        /* Count of data packets seen for this AP */
