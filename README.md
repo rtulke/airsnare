@@ -47,6 +47,23 @@ airsnare -r in.pcap -x 00:11:22:33:44:55 -w out.pcap
 
 ## Setup
 
+### Homebrew (macOS)
+
+The easiest way to install on macOS:
+
+```
+brew tap rtulke/airsnare https://github.com/rtulke/airsnare
+brew install rtulke/airsnare/airsnare
+```
+
+To upgrade to a new release:
+
+```
+brew update && brew upgrade airsnare
+```
+
+For Linux or development builds, continue with the sections below.
+
 ### Dependencies
 
 For Debian-based systems:
