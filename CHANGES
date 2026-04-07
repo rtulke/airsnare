@@ -1,0 +1,58 @@
+AirSnare — Change Log
+
+=============================================================================
+0.9.0 (2026-04-07)
+=============================================================================
+
+Stability fixes
+  - BUG-1: add missing return after SUDO_GID error; prevented atoi(NULL) crash
+  - BUG-2: try _nobody before nobody on macOS; getpwnam("nobody") returns NULL
+    on macOS causing a segfault
+  - BUG-3: rename #define abs(x,y) to ZZ_ABS() to avoid clobbering stdlib abs()
+  - BUG-4: add _Static_assert for composite hash key alignment in clients.c
+  - BUG-5: guard memcpy against NULL ssid and add SSID length bounds check
+  - BUG-6: use arc4random_uniform() on macOS instead of non-thread-safe rand()
+  - BUG-7: zz_error() now returns 0 consistently (was accidentally returning 1,
+    inverting all error paths that used it)
+  - BUG-8: remove redundant is_live guard inside is_live branch in handler.c
+
+macOS functionality
+  - MACOS-1: channel setting via networksetup with automatic airport fallback
+    for Ventura+ where -setairportchannel was removed from networksetup;
+    subprocess output suppressed via posix_spawn file actions
+  - MACOS-2: explicit error on pcap_inject failure with actionable note about
+    passive mode (-n) and external USB adapters for Apple Silicon
+  - MACOS-3: descriptive error and hint when pcap_set_rfmon fails; guides user
+    toward -M flag and SIP considerations
+  - MACOS-4: replace deprecated setitimer/SIGALRM with kqueue EVFILT_TIMER
+    and EVFILT_SIGNAL on macOS
+
+Protocol features
+  - PROTO-1: add Reassociation Request/Response frames (0x20, 0x30) to BPF
+    filter; reset per-client handshake state on reassociation
+  - PROTO-2: parse RSN IE from beacon tagged parameters to detect PMF
+    capability bits (MFPC bit 7, MFPR bit 6); warn when targeting APs that
+    require management frame protection
+  - PROTO-3: expose handshake_timeout as a configuration key (default 500 ms);
+    controls the maximum time window between consecutive EAPOL messages
+  - PROTO-4: extract PMKID from EAPOL Message 1 key data (KDE wire format
+    DD 14 00:0F:AC 04 <16 bytes>); log in hashcat 22000 format (WPA*01*...)
+    for offline cracking without a full 4-way handshake
+
+Code quality
+  - INT-1: fall back to getpwuid(getuid())->pw_dir when HOME is unset in
+    config file ~ expansion; handles sudo configurations that do not
+    forward HOME
+  - INT-2: move ZZ_LOG_LEVEL_NAMES[] definition from static-in-header to
+    terminal.c; log.h now uses extern declaration to avoid per-TU copies
+  - INT-3: remove legacy zz_out/zz_log aliases from terminal.h; all callers
+    updated to zz_info/zz_debug
+  - INT-4: eliminate static pcap_t *pcap global and terminate_pcap_loop()
+    async signal handler; SIGINT and SIGTERM are now blocked in the main
+    thread and delivered to the dispatcher thread, which calls
+    pcap_breakloop(zz->pcap) directly using its zz argument
+    (kqueue EVFILT_SIGNAL on macOS, sigwait set on Linux)
+
+=============================================================================
+0.3.0 and earlier — see git log
+=============================================================================
