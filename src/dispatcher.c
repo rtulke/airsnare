@@ -237,6 +237,18 @@ int zz_dispatcher_start(zz_handler *zz, pthread_t *thread) {
         return 0;
     }
 
+    /* SIGPIPE must not be blocked: if airsnare's output is piped to a tool
+     * that exits early (e.g. "airsnare ... | head -5"), the write to the
+     * broken pipe must terminate the process immediately.  sigfillset above
+     * would keep SIGPIPE blocked forever because the dispatcher thread does
+     * not watch it via kqueue/sigwait. */
+    {
+        sigset_t unblock_pipe;
+        sigemptyset(&unblock_pipe);
+        sigaddset(&unblock_pipe, SIGPIPE);
+        pthread_sigmask(SIG_UNBLOCK, &unblock_pipe, NULL);
+    }
+
     zz_debug("Starting the dispatcher thread");
     pthread_error = pthread_create(thread, NULL, dispatcher, zz);
     if (pthread_error != 0) {
