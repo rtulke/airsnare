@@ -86,6 +86,15 @@ static int create_pcap(zz_handler *zz) {
                 return 0;
             }
 
+            /* Set a read timeout so pcap_loop() wakes up periodically and
+             * can honor pcap_breakloop() even when no packets are arriving.
+             * Without this, read() on the BPF device blocks indefinitely and
+             * Ctrl-C has no effect until the next matching packet is seen. */
+            if (pcap_set_timeout(zz->pcap, 1000) != 0) {
+                zz_error(zz, "libpcap: %s", pcap_geterr(zz->pcap));
+                return 0;
+            }
+
             /* Enable monitor mode (RFMON) unless -M was given.
              * On macOS this may fail if the adapter does not support RFMON,
              * SIP blocks raw 802.11 access, or the interface is already in
