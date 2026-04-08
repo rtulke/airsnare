@@ -169,6 +169,13 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
 
         case 'n':  /* Passive mode (no deauth attacks) */
             zz->setup.is_passive = 1;
+            /* CLI -n takes priority over any deauth settings loaded from config
+             * files. Without this reset, ~/.airsnarerc entries for deauth_count,
+             * deauth_attempts, or deauth_interval trigger the conflict check even
+             * though the user explicitly requested passive mode. */
+            zz->setup.n_deauths = ZZ_DEFAULT_N_DEAUTHS;
+            zz->setup.killer_max_attempts = ZZ_DEFAULT_KILLER_ATTEMPTS;
+            zz->setup.killer_interval = ZZ_DEFAULT_KILLER_INTERVAL;
             break;
 
         case 'd':  /* Number of deauth frames per burst */
