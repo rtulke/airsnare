@@ -4,7 +4,8 @@
  * Channel setting is split into two phases to accommodate platform differences:
  *
  *   zz_set_channel_pre_rfmon()  — called BEFORE pcap_activate()
- *       macOS: sets channel via networksetup(8) while still in managed mode
+ *       macOS: sets channel via CoreWLAN while still in managed mode
+ *              (implemented in iface_macos.m)
  *       Linux: no-op (ioctl works post-RFMON)
  *
  *   zz_set_channel()            — called AFTER pcap_activate()

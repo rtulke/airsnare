@@ -72,7 +72,7 @@ static int create_pcap(zz_handler *zz) {
             snaplen = zz->setup.output ? MAX_SNAPLEN : MIN_SNAPLEN;
 
             /* Set wireless channel before RFMON activation if specified.
-             * On macOS this is the only effective call (networksetup must run
+             * On macOS this is the only effective call (CoreWLAN must run
              * while the interface is still in managed mode). On Linux it is a
              * no-op; the ioctl is performed after pcap_activate() below. */
             if (zz->setup.channel > 0 && !zz_set_channel_pre_rfmon(zz)) {
