@@ -16,3 +16,4 @@ AGENTS.md
 memory/
 .github/
 config.Makefile
+/release

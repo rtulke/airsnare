@@ -1,6 +1,36 @@
 AirSnare — Change Log
 
 =============================================================================
+0.10.0 (2026-07-28)
+=============================================================================
+
+macOS
+  - Set the Wi-Fi channel via CoreWLAN (-setWLANChannel:) instead of the
+    removed networksetup/airport CLI tools; fixes capture on macOS 15 (Sequoia)
+
+Security / correctness fixes
+  - Beacon SSID parsing could read up to ~255 bytes past the packet from a
+    crafted beacon; bound the TLV scan and pass the correct length (OOB read)
+  - Killer injection failure no longer hangs the capture loop (which also left
+    Ctrl-C unresponsive); the loop is now broken on failure
+  - pthread_join() no longer writes a pointer into a 4-byte int (stack OOB write)
+  - SUDO_UID/GID are parsed strictly; malformed values no longer silently keep
+    full root privileges during the privilege drop
+
+Concurrency
+  - Deauth injection uses a dedicated pcap handle so the dispatcher thread and
+    the main capture loop never share one pcap_t (falls back to the shared one)
+  - is_done and log_level are now atomic, out of shared bit-fields
+
+Options / robustness
+  - Numeric arguments reject trailing garbage (e.g. "-c 6abc")
+  - Live-only/passive checks track CLI presence of -M/-c/-n/-d/-a/-t, so a
+    persistent ~/.airsnarerc no longer blocks -r and "-d 5 -n" no longer
+    silently discards -d
+  - Minor: free the BPF program on setfilter failure; faster shutdown; NUL-safe
+    interface name; snprintf instead of sprintf; clearer -x error message
+
+=============================================================================
 0.9.0 (2026-04-07)
 =============================================================================
 
