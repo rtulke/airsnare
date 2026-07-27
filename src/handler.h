@@ -10,6 +10,8 @@
 #ifndef ZZ_HANDLER_H
 #define ZZ_HANDLER_H
 
+#include <stdatomic.h>
+
 #include <pcap/pcap.h>
 
 #include "clients.h"
@@ -43,7 +45,11 @@ typedef struct zz_handler {
         char *output;                     /* Output pcap file path */
         unsigned is_live:1;               /* Capturing from live interface vs file */
         unsigned is_passive:1;            /* Passive mode: no deauth attacks */
-        unsigned log_level:3;             /* Logging verbosity level (0=ERROR, 1=INFO, 2=WARN, 3=DEBUG, 4=TRACE) */
+        /* Standalone (not a bit-field): the dispatcher thread updates it on
+         * SIGUSR1 while the main thread reads it during logging. A bit-field
+         * would share a storage unit with the flags around it, so that RMW
+         * would race with reads of those adjacent flags. */
+        _Atomic unsigned log_level;       /* Logging verbosity level (0=ERROR, 1=INFO, 2=WARN, 3=DEBUG, 4=TRACE) */
         unsigned is_tty_output:1;         /* Output is to a TTY (enables colors) */
         unsigned no_rfmon:1;              /* Don't set monitor mode (already set) */
         unsigned dump_group_traffic:1;    /* Include broadcast/multicast traffic in output */
@@ -68,7 +74,10 @@ typedef struct zz_handler {
 
     double epoch;  /* Timestamp of first packet (used for relative time display) */
 
-    pcap_t *pcap;          /* libpcap handle for packet capture */
+    pcap_t *pcap;          /* libpcap handle for packet capture (main thread) */
+    pcap_t *inject_pcap;   /* Dedicated handle for deauth injection (dispatcher
+                            * thread only) so the two threads never touch the
+                            * same pcap_t concurrently; NULL falls back to pcap */
     pcap_dumper_t *dumper; /* libpcap handle for writing output pcap */
 
     zz_bsss bsss;       /* Hash table of tracked access points (BSSs) */
@@ -79,7 +88,9 @@ typedef struct zz_handler {
     unsigned long killer_pipe_drops; /* Number of killer pipe messages dropped (EAGAIN) */
 
     unsigned killer_initialized:1; /* Killer subsystem successfully initialized */
-    unsigned is_done:1; /* Flag to signal shutdown */
+    /* Shutdown flag written by both the main thread and the dispatcher thread;
+     * atomic (not a bit-field) to avoid a data race on the shared storage. */
+    _Atomic int is_done; /* Flag to signal shutdown */
 
     char error_buffer[ZZ_ERROR_BUFFER_SIZE]; /* Error message storage */
 } zz_handler;

@@ -191,6 +191,10 @@ static void del_target(zz_killer *killer, const struct zz_target *target) {
  */
 static int kill_target(zz_handler *zz, struct zz_target *target) {
     int i;
+    /* Inject on the dedicated handle so we never touch zz->pcap (owned by the
+     * main thread's capture loop) concurrently. Falls back to the shared handle
+     * if the dedicated one could not be opened. */
+    pcap_t *inject = zz->inject_pcap ? zz->inject_pcap : zz->pcap;
 
     /* Deauthentication packet structure (packed for direct injection) */
     struct {
@@ -217,16 +221,16 @@ static int kill_target(zz_handler *zz, struct zz_target *target) {
     /* Send a burst of deauth frames (typically 1, configurable via -d) */
     for (i = 0; i < zz->setup.n_deauths; i++) {
         /* Inject the packet onto the wireless interface */
-        if (pcap_inject(zz->pcap, &packet, sizeof(packet)) == -1) {
+        if (pcap_inject(inject, &packet, sizeof(packet)) == -1) {
 #ifdef __APPLE__
             zz_error(zz, "Packet injection failed (%s) — "
                          "built-in Wi-Fi adapters on macOS do not support "
                          "monitor-mode injection; use passive mode (-n) or "
                          "an external USB adapter",
-                     pcap_geterr(zz->pcap));
+                     pcap_geterr(inject));
 #else
             zz_error(zz, "Cannot inject the deauthentication packet: %s",
-                     pcap_geterr(zz->pcap));
+                     pcap_geterr(inject));
 #endif
             return 0;
         }

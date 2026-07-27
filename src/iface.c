@@ -51,7 +51,10 @@ static int iwreq_freq(int fd, const char *iface, int channel) {
     struct iwreq iwreq;
 
     memset(&iwreq, 0, sizeof(struct iwreq));
-    strncpy(iwreq.ifr_name, iface, IFNAMSIZ);
+    /* Copy at most IFNAMSIZ-1 bytes and force NUL termination: strncpy leaves
+     * ifr_name unterminated when the interface name is exactly IFNAMSIZ long. */
+    strncpy(iwreq.ifr_name, iface, IFNAMSIZ - 1);
+    iwreq.ifr_name[IFNAMSIZ - 1] = '\0';
     iwreq.u.freq.m = channel;
     iwreq.u.freq.e = 0;
 

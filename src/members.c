@@ -193,4 +193,8 @@ void zz_members_free(zz_members *members) {
         HASH_DEL(*members, device);
         free(device);
     }
+
+    /* Leave the set in a clean empty state, consistent with zz_bsss_free /
+     * zz_clients_free, so a stale non-NULL head can never be reused. */
+    *members = NULL;
 }

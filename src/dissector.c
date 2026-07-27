@@ -61,31 +61,36 @@ static int process_packet_outcome(zz_handler *zz, const struct pcap_pkthdr *pack
  */
 static void get_ssid(const uint8_t *params, uint32_t length,
                      const char **ssid, int *ssid_length) {
-    const uint8_t *ptr;
+    const uint8_t *ptr = params;
+    const uint8_t *end = params + length;
 
     /* Initialize outputs to empty (prevents valgrind warnings) */
     *ssid = NULL;
     *ssid_length = 0;
 
-    /* Scan through tagged parameters (TLV format: type, length, value) */
-    ptr = params;
-    while (ptr < params + length) {
-        uint8_t param_type;
-        uint8_t param_length;
+    /* Scan through tagged parameters (TLV format: type, length, value).
+     * Every read is bounds-checked against 'end' so that a crafted/truncated
+     * beacon cannot drive reads past the captured buffer (mirrors the
+     * validation in get_rsn_capabilities below). */
+    while (ptr + 2 <= end) {
+        uint8_t param_type   = ptr[0];
+        uint8_t param_length = ptr[1];
+        const uint8_t *value = ptr + 2;
 
-        /* Read type and length fields */
-        param_type = *ptr++;
-        param_length = *ptr++;
+        /* Reject a TLV whose value would extend past the captured data */
+        if (value + param_length > end) {
+            break;
+        }
 
         /* Check if this is the SSID parameter (type 0) */
         if (param_type == ZZ_BEACON_SSID_PARAM_TYPE) {
             *ssid_length = param_length;
-            *ssid = (const char *)ptr;
+            *ssid = (const char *)value;
             return;
         }
 
         /* Skip to next parameter */
-        ptr += param_length;
+        ptr = value + param_length;
     }
 }
 
@@ -225,9 +230,17 @@ static int handle_beacon_frame(zz_handler *zz, const struct pcap_pkthdr *packet_
             pcap_dump((u_char *)zz->dumper, packet_header, packet);
         }
 
-        get_ssid(cursor + ZZ_BEACON_SSID_PARAMS_OFFSET,
-                 packet_header->caplen - (cursor - packet),
-                 &ssid, &ssid_length);
+        {
+            /* The tagged parameters start ZZ_BEACON_SSID_PARAMS_OFFSET bytes
+             * (fixed timestamp/interval/capability fields) past 'cursor'. The
+             * length must be measured from that same point — measuring from
+             * 'cursor' would let get_ssid scan up to the offset past caplen. */
+            const uint8_t *params = cursor + ZZ_BEACON_SSID_PARAMS_OFFSET;
+            uint32_t params_offset = (uint32_t)(params - packet);
+            uint32_t params_length = packet_header->caplen > params_offset
+                                     ? packet_header->caplen - params_offset : 0U;
+            get_ssid(params, params_length, &ssid, &ssid_length);
+        }
         if (ssid_length > 0 && ssid_length <= ZZ_BEACON_MAX_SSID_LENGTH) {
             memcpy(bss->ssid_raw, ssid, (size_t)ssid_length);
             bss->ssid_raw_length = ssid_length;

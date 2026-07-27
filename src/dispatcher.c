@@ -112,7 +112,12 @@ static void *dispatcher(void *_zz) {
                 /* Periodic tick: invoke killer in active mode */
                 if (!zz->setup.is_passive) {
                     if (!zz_killer_run(zz, &zz->killer)) {
+                        /* Break the capture loop too: setting is_done alone does
+                         * not make pcap_loop() return, so the main thread would
+                         * otherwise hang forever (and Ctrl-C would be dead once
+                         * this dispatcher thread exits). Mirror the SIGINT path. */
                         error = zz->is_done = 1;
+                        pcap_breakloop(zz->pcap);
                     }
                 }
                 break;
@@ -182,7 +187,11 @@ static void *dispatcher(void *_zz) {
             /* Periodic timer expired — invoke killer if in active mode */
             if (!zz->setup.is_passive) {
                 if (!zz_killer_run(zz, &zz->killer)) {
+                    /* Break the capture loop too: setting is_done alone does not
+                     * make pcap_loop() return, so the main thread would otherwise
+                     * hang forever. Mirror the SIGINT path. */
                     error = zz->is_done = 1;
+                    pcap_breakloop(zz->pcap);
                 }
             }
             break;

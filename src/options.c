@@ -6,6 +6,7 @@
  * Performs extensive validation to catch incompatible option combinations.
  */
 
+#include <ctype.h>
 #include <errno.h>
 #include <getopt.h>
 #include <limits.h>
@@ -41,6 +42,18 @@ static int parse_natural(const char *string, int *value) {
     /* Attempt conversion from string to long */
     errno = 0;
     tmp = strtol(string, &chk, 10);
+
+    /* Reject trailing garbage after the number (e.g. "6abc"), skipping only
+     * trailing whitespace — matching the config parser's parse_int_option. */
+    if (chk == string) {
+        return 0;
+    }
+    while (isspace((unsigned char)*chk)) {
+        chk++;
+    }
+    if (*chk != '\0') {
+        return 0;
+    }
 
     /* Validate: no overflow, positive, fits in int */
     if (errno == ERANGE || tmp <= 0 || tmp > INT_MAX) {
@@ -119,6 +132,8 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
     int cli_outputs = 0;       /* Count of CLI output specifications */
     int max_handshake_2 = 0;   /* Flag for -2 option */
     int max_handshake_3 = 0;   /* Flag for -3 option */
+    int cli_attack_opt = 0;    /* A deauth attack option (-d/-a/-t) appeared on the CLI */
+    int cli_live_only = 0;     /* A live-only option (-M/-c/-n) appeared on the CLI */
     static const struct option long_options[] = {
         { "config",            required_argument, NULL, OPT_CONFIG },
         { "handshake-timeout", required_argument, NULL, OPT_HANDSHAKE_TIMEOUT },
@@ -158,6 +173,7 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
 
         case 'M':  /* Don't set monitor (RFMON) mode */
             zz->setup.no_rfmon = 1;
+            cli_live_only = 1;
             break;
 
         case 'c':  /* Set wireless channel */
@@ -165,17 +181,17 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
                 zz_error(zz, "Invalid channel '%s'", optarg);
                 return 0;
             }
+            cli_live_only = 1;
             break;
 
         case 'n':  /* Passive mode (no deauth attacks) */
             zz->setup.is_passive = 1;
-            /* CLI -n takes priority over any deauth settings loaded from config
-             * files. Without this reset, ~/.airsnarerc entries for deauth_count,
-             * deauth_attempts, or deauth_interval trigger the conflict check even
-             * though the user explicitly requested passive mode. */
-            zz->setup.n_deauths = ZZ_DEFAULT_N_DEAUTHS;
-            zz->setup.killer_max_attempts = ZZ_DEFAULT_KILLER_ATTEMPTS;
-            zz->setup.killer_interval = ZZ_DEFAULT_KILLER_INTERVAL;
+            cli_live_only = 1;
+            /* Do NOT reset the deauth fields here. Passive mode already stops
+             * the killer from running, so config-sourced deauth values are
+             * harmless, and the conflict check below keys on cli_attack_opt so
+             * it no longer depends on option order (previously "-d 5 -n"
+             * silently discarded the "-d 5"). */
             break;
 
         case 'd':  /* Number of deauth frames per burst */
@@ -183,6 +199,7 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
                 zz_error(zz, "Invalid deauthentication count '%s'", optarg);
                 return 0;
             }
+            cli_attack_opt = 1;
             break;
 
         case 'a':  /* Maximum deauth attempts before giving up */
@@ -190,6 +207,7 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
                 zz_error(zz, "Invalid max deauthentication attempts '%s'", optarg);
                 return 0;
             }
+            cli_attack_opt = 1;
             break;
 
         case 't':  /* Time between deauth attempts (seconds) */
@@ -197,6 +215,7 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
                 zz_error(zz, "Invalid deauthentication interval '%s'", optarg);
                 return 0;
             }
+            cli_attack_opt = 1;
             break;
 
         case OPT_HANDSHAKE_TIMEOUT:  /* Max ms between messages of the same handshake */
@@ -222,7 +241,9 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
             } else if (strcmp(optarg, "s") == 0) {
                 zz->setup.stations_exclude_first = 1;  /* Apply station exclude before include */
             } else {
-                zz_error(zz, "Invalid argument '%s' for option -%c", optarg, optopt);
+                /* Use the literal option letter: optopt is only set by getopt
+                 * on '?'/':' returns, not for a normally-returned -x. */
+                zz_error(zz, "Invalid argument '%s' for option -x", optarg);
                 return 0;
             }
             break;
@@ -291,25 +312,18 @@ int zz_parse_options(zz_handler *zz, int argc, char *argv[]) {
         return 0;
     }
 
-    /* Live-only options can't be used with file input (-r) */
-    const int custom_n_deauths =
-        (zz->setup.n_deauths != ZZ_DEFAULT_N_DEAUTHS);
-    const int custom_killer_attempts =
-        (zz->setup.killer_max_attempts != ZZ_DEFAULT_KILLER_ATTEMPTS);
-    const int custom_killer_interval =
-        (zz->setup.killer_interval != ZZ_DEFAULT_KILLER_INTERVAL);
-    const int attack_options =
-        custom_n_deauths || custom_killer_attempts || custom_killer_interval;
-
-    if (!zz->setup.is_live &&
-        (zz->setup.no_rfmon || zz->setup.channel > 0 || zz->setup.is_passive ||
-         attack_options)) {
+    /* Live-only options can't be used with file input (-r).
+     * Key on whether the option actually appeared on the CLI, not on the
+     * resulting state: a persistent ~/.airsnarerc that sets channel/no_rfmon/
+     * passive or deauth values is ambient and must not break "-r file.pcap",
+     * while an explicit CLI "-c 6" or "-d 1" (even equal to a default) must. */
+    if (!zz->setup.is_live && (cli_live_only || cli_attack_opt)) {
         zz_error(zz, "Options -M, -c, -n, -d, -a, -t require live capture (-i); cannot use with -r");
         return 0;
     }
 
-    /* Attack-related options conflict with passive mode */
-    if (zz->setup.is_passive && attack_options) {
+    /* Attack-related options conflict with passive mode (order-independent) */
+    if (zz->setup.is_passive && cli_attack_opt) {
         zz_error(zz, "Options -d, -a, -t (deauth attacks) conflict with -n (passive mode)");
         return 0;
     }

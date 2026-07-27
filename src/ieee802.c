@@ -197,8 +197,8 @@ void zz_ssid_escape_sprint(char *buffer, const char *ssid, int ssid_length) {
         if ((isgraph(c) || c == ' ') && c != '\\' && c != '\'') {
             *ptr++ = c;
         } else {
-            /* Escape non-printable as \xHH */
-            sprintf(ptr, "\\x%02x", (unsigned char)c);
+            /* Escape non-printable as \xHH (exactly 4 chars + NUL) */
+            snprintf(ptr, 5, "\\x%02x", (unsigned char)c);
             ptr += 4;
         }
     }

@@ -50,6 +50,48 @@
  * Returns:
  *   1 on success, 0 on failure (error in zz->error_buffer)
  */
+/*
+ * Open a dedicated pcap handle used only for deauthentication injection.
+ *
+ * Injection runs on the dispatcher thread while the main thread is blocked in
+ * pcap_loop() on zz->pcap; a pcap_t is not thread-safe, so the two must not
+ * share one handle. This second handle is opened here — while we are still
+ * root, before zz_drop_root() — and afterwards only the dispatcher touches it.
+ *
+ * A failure to open the dedicated handle is non-fatal: inject_pcap stays NULL
+ * and the killer falls back to the shared handle (the previous behavior), so
+ * platforms where a second monitor handle cannot be opened still work.
+ *
+ * Returns: always 1 (never fatal).
+ */
+static int open_inject_pcap(zz_handler *zz) {
+    char errbuf[PCAP_ERRBUF_SIZE];
+    pcap_t *p;
+
+    *errbuf = '\0';
+    p = pcap_create(zz->setup.input, errbuf);
+    if (!p) {
+        zz_warn("Cannot open a dedicated injection handle (%s); falling back to "
+                "the shared capture handle", errbuf);
+        return 1;
+    }
+
+    /* Match the capture handle's monitor-mode setting so the injection handle
+     * sees the same 802.11 link layer. No filter, timeout or promisc needed. */
+    if ((!zz->setup.no_rfmon && pcap_set_rfmon(p, 1) != 0) ||
+        pcap_set_snaplen(p, MAX_SNAPLEN) != 0 ||
+        pcap_activate(p) != 0) {
+        zz_warn("Cannot activate a dedicated injection handle (%s); falling back "
+                "to the shared capture handle", pcap_geterr(p));
+        pcap_close(p);
+        return 1;
+    }
+
+    zz->inject_pcap = p;
+    zz_debug("Opened dedicated injection handle for '%s'", zz->setup.input);
+    return 1;
+}
+
 static int create_pcap(zz_handler *zz) {
     char pcap_error_buffer[PCAP_ERRBUF_SIZE];
 
@@ -122,6 +164,12 @@ static int create_pcap(zz_handler *zz) {
             /* Set wireless channel after RFMON activation if specified.
              * On Linux this performs the ioctl; on macOS it is a no-op. */
             if (zz->setup.channel > 0 && !zz_set_channel(zz)) {
+                return 0;
+            }
+
+            /* Open the dedicated injection handle while still root and before
+             * dropping privileges (only needed in active mode). */
+            if (!zz->setup.is_passive && !open_inject_pcap(zz)) {
                 return 0;
             }
         }
@@ -200,6 +248,7 @@ static int set_bpf(zz_handler *zz) {
     /* Install the compiled filter */
     if (pcap_setfilter(zz->pcap, &fp) != 0) {
         zz_error(zz, "libpcap: %s", pcap_geterr(zz->pcap));
+        pcap_freecode(&fp);  /* Free the compiled program even on failure */
         return 0;
     }
 
@@ -247,7 +296,7 @@ static int open_dumper(zz_handler *zz) {
 static int packet_loop(zz_handler *zz) {
     pthread_t dispatcher;
     int error;
-    int dispatcher_return;
+    void *dispatcher_return;
 
     /* Start the dispatcher thread (handles periodic killer invocation) */
     if (!zz_dispatcher_start(zz, &dispatcher)) {
@@ -286,13 +335,20 @@ static int packet_loop(zz_handler *zz) {
     zz_info("Terminating...");
     zz->is_done = 1;
 
-    /* Wait for dispatcher thread to complete */
-    if (pthread_join(dispatcher, (void *)&dispatcher_return) != 0) {
+    /* Wake the dispatcher so it observes is_done immediately instead of
+     * blocking in sigwait()/kevent() until the next ~1s timer tick. The
+     * SIGINT/SIGTERM path in the dispatcher just breaks the (already-returned)
+     * loop and exits; delivery to an already-exited thread is a harmless ESRCH. */
+    pthread_kill(dispatcher, SIGTERM);
+
+    /* Wait for dispatcher thread to complete. pthread_join writes the thread's
+     * void* return value, so the destination must be a void* (not an int). */
+    if (pthread_join(dispatcher, &dispatcher_return) != 0) {
         zz_error(zz, "Cannot join the dispatcher");
         return 0;
     }
 
-    return !error && dispatcher_return;
+    return !error && (dispatcher_return != NULL);
 }
 
 /*
@@ -425,6 +481,10 @@ fail:
         zz_killer_free(zz, &zz->killer);
         zz->killer_initialized = 0;
     }
+    if (zz->inject_pcap) {
+        pcap_close(zz->inject_pcap);
+        zz->inject_pcap = NULL;
+    }
     if (zz->pcap) {
         pcap_close(zz->pcap);
         zz->pcap = NULL;
@@ -479,6 +539,12 @@ int zz_finalize(zz_handler *zz) {
     if (zz->killer_initialized) {
         zz_killer_free(zz, &zz->killer);
         zz->killer_initialized = 0;
+    }
+
+    /* Close the dedicated injection handle (dispatcher already joined) */
+    if (zz->inject_pcap) {
+        pcap_close(zz->inject_pcap);
+        zz->inject_pcap = NULL;
     }
 
     /* Close pcap handle */

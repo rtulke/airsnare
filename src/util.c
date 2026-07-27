@@ -5,6 +5,7 @@
  * system-level operations.
  */
 
+#include <errno.h>
 #include <grp.h>
 #include <pwd.h>
 #include <stdlib.h>
@@ -13,6 +14,27 @@
 
 #include "handler.h"
 #include "terminal.h"
+
+/*
+ * Parse a strictly-numeric, non-zero id from an environment string.
+ * atoi() cannot distinguish "0" from garbage, which would silently turn the
+ * privilege drop below into a no-op (uid/gid 0 succeeds while running as root).
+ * Rejects empty strings, trailing garbage, overflow, and a resulting 0.
+ *
+ * Returns: 1 and stores the value on success, 0 on any parse failure.
+ */
+static int parse_id(const char *s, unsigned long *out) {
+    char *end;
+    unsigned long value;
+
+    errno = 0;
+    value = strtoul(s, &end, 10);
+    if (errno != 0 || end == s || *end != '\0' || value == 0) {
+        return 0;
+    }
+    *out = value;
+    return 1;
+}
 
 /*
  * Drop root privileges after completing operations that require them.
@@ -49,13 +71,22 @@ int zz_drop_root(zz_handler *zz) {
 
         zz_debug("Running with sudo, becoming '%s'", sudo_user);
 
-        /* Get the original user's UID from environment */
+        /* Get the original user's UID from environment. Parse strictly: a
+         * malformed value must abort the drop, never silently fall back to 0
+         * (which would keep full root privileges while reporting success). */
         id = getenv("SUDO_UID");
         if (!id) {
             zz_error(zz, "SUDO_UID not defined");
             return 0;
         }
-        uid = atoi(id);
+        {
+            unsigned long value;
+            if (!parse_id(id, &value)) {
+                zz_error(zz, "Invalid SUDO_UID '%s'; refusing to drop privileges", id);
+                return 0;
+            }
+            uid = (uid_t)value;
+        }
 
         /* Get the original user's GID from environment */
         id = getenv("SUDO_GID");
@@ -63,7 +94,14 @@ int zz_drop_root(zz_handler *zz) {
             zz_error(zz, "SUDO_GID not defined");
             return 0;
         }
-        gid = atoi(id);
+        {
+            unsigned long value;
+            if (!parse_id(id, &value)) {
+                zz_error(zz, "Invalid SUDO_GID '%s'; refusing to drop privileges", id);
+                return 0;
+            }
+            gid = (gid_t)value;
+        }
     }
     /* Not running via sudo - become the 'nobody' user for minimal privileges */
     else {
