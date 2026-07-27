@@ -1,8 +1,8 @@
 class Airsnare < Formula
   desc "WPA handshake capture with deauthentication and PMKID extraction"
   homepage "https://github.com/rtulke/airsnare"
-  url "https://github.com/rtulke/airsnare/archive/refs/tags/v0.9.0.tar.gz"
-  sha256 "0c9319a843ff57c32d398332cbaedb44824fa3c1b1839396725049d3eeb55d04"
+  url "https://github.com/rtulke/airsnare/archive/refs/tags/v0.10.0.tar.gz"
+  sha256 "9dd4b26a6f9bd6f961628aacd79beb0b0051ff4c1eb338022f6f134a37279868"
   license "MIT"
   head "https://github.com/rtulke/airsnare.git", branch: "master"
 
