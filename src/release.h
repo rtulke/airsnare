@@ -9,7 +9,7 @@
 #define ZZ_RELEASE_H
 
 /* Current version number of AirSnare */
-#define ZZ_VERSION "0.9.0"
+#define ZZ_VERSION "0.10.0"
 
 /* Brief description of the tool's primary functionality */
 #define ZZ_DESCRIPTION "Automated DeAuth attack"
