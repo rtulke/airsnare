@@ -143,23 +143,23 @@ So lassen sich vorkonfigurierte Profile pflegen, während einzelne Flags (z.B. `
 ### Kanalwechsel
 
 `-c <kanal>` setzt den Kanal **vor** der RFMON-Aktivierung (zwingend, da `pcap_activate` das
-Interface übernimmt). AirSnare versucht dabei automatisch zwei Methoden der Reihe nach:
-
-1. `/usr/sbin/networksetup -setairportchannel` — funktioniert bis macOS Monterey
-2. Das `airport`-Tool — automatischer Fallback für macOS Ventura+ (dort wurde der
-   `-setairportchannel`-Unterbefehl aus `networksetup` entfernt)
-
-Läuft AirSnare als root, wird der Kanal automatisch gesetzt:
+Interface übernimmt). Läuft AirSnare als root, wird der Kanal automatisch gesetzt:
 
 ```
 sudo airsnare -i en0 -c 6 -n
 ```
 
-Für manuellen Kanalwechsel `-M` übergeben (AirSnare konfiguriert das Interface dann nicht selbst):
+Der Kanal wird über das native **CoreWLAN**-Framework (`-setWLANChannel:`) gesetzt — es werden
+keine externen Hilfsprogramme mehr benötigt. Frühere Versionen riefen `networksetup` und als
+Fallback das `airport`-Tool auf; `networksetup` hat `-setairportchannel` seit Ventura entfernt und
+`airport` wurde in macOS 15 (Sequoia) komplett gestrichen — CoreWLAN ist damit der einzige noch
+unterstützte Weg. Lässt sich der Kanal nicht setzen (z. B. weil das Interface mit einem Netz
+verbunden ist oder der Adapter ablehnt), beendet sich AirSnare mit der CoreWLAN-Fehlermeldung.
+
+Damit AirSnare den Kanalwechsel überspringt — etwa wenn du den Kanal vorher mit einem anderen
+Tool setzt — `-c` weglassen und `-M` übergeben, falls das Interface bereits im Monitor-Modus ist:
 
 ```
-sudo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport \
-     --channel=<kanal>
 sudo airsnare -i en0 -M -n
 ```
 

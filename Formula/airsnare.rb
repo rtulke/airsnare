@@ -19,8 +19,8 @@ class Airsnare < Formula
       AirSnare requires root to open the wireless interface in monitor mode:
         sudo airsnare -i en0 -c 6 -n
 
-      Channel switching is automatic: networksetup is tried first (Monterey
-      and earlier), airport is the fallback (Ventura+). Both require sudo.
+      Channel switching is automatic via the native CoreWLAN framework
+      (-setWLANChannel:); no external helpers are needed. Requires sudo.
 
       Packet injection (deauthentication) is not supported on built-in Wi-Fi
       adapters on Apple Silicon. Use passive mode (-n) or an external USB

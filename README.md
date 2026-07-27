@@ -20,7 +20,7 @@ AirSnare also works hand-in-hand with [AirJack](https://github.com/rtulke/AirJac
 ## Examples
 
 > **macOS:** replace `wlan0` with `en0` in all examples. The `-c <channel>` flag sets the
-> channel via `networksetup` automatically — running as root (`sudo`) is required.
+> channel via the native CoreWLAN framework automatically — running as root (`sudo`) is required.
 > See [macOS Support](#macos-support) for details and manual alternatives.
 
 Put the network interface in RFMON mode on channel 6 and save the traffic gathered from the stations associated to a specific access point excluding those whose MAC address starts with `00:11:22`:
@@ -169,18 +169,17 @@ On macOS, `-c <channel>` sets the channel **before** monitor mode is activated (
 sudo airsnare -i en0 -c 6 -n
 ```
 
-Two methods are tried in order:
+The channel is set through the native **CoreWLAN** framework (`-setWLANChannel:`), so no external
+helpers are required. Earlier releases shelled out to `networksetup` and then the `airport`
+utility, but `networksetup` dropped `-setairportchannel` in Ventura and `airport` was removed
+entirely in macOS 15 (Sequoia) — CoreWLAN is now the only supported path. If the channel cannot
+be set (for example the interface is associated to a network, or the adapter rejects it), AirSnare
+exits with the underlying CoreWLAN error.
 
-1. `/usr/sbin/networksetup -setairportchannel` — works on macOS Monterey and earlier
-2. The `airport` utility — automatic fallback for macOS Ventura+ (where `networksetup` dropped
-   the `-setairportchannel` subcommand)
-
-If both fail, AirSnare exits with a descriptive error. To set the channel manually and skip
-AirSnare's auto-switching, pass `-M`:
+To have AirSnare skip channel switching — e.g. when you set the channel with another tool first —
+omit `-c`, and pass `-M` if the interface is already in monitor mode:
 
 ```
-sudo /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport \
-     --channel=<channel>
 sudo airsnare -i en0 -M -n
 ```
 
